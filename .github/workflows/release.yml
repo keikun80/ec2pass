@@ -1,0 +1,137 @@
+name: Release Build and Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release Tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  # --------------------------------------------------------------------------
+  # 1. Linux Build Job
+  # --------------------------------------------------------------------------
+  build-linux:
+    name: Build Linux (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build & Package Linux Archive
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          bash packaging/build_release.sh "$TAG"
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ec2pass-linux-artifacts
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------------
+  # 2. macOS Build Job (Universal 2: Apple Silicon + Intel)
+  # --------------------------------------------------------------------------
+  build-macos:
+    name: Build macOS (Universal 2)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Stable Toolchain with Multi-Arch Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Build & Package macOS Universal Archives
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          bash packaging/macos/build_macos_packages.sh "$TAG"
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ec2pass-macos-artifacts
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------------
+  # 3. Windows Build Job
+  # --------------------------------------------------------------------------
+  build-windows:
+    name: Build Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Compile and Package Windows Archive
+        shell: powershell
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          powershell -ExecutionPolicy Bypass -File packaging/build_release.ps1 -version "$tag"
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ec2pass-windows-artifacts
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------------
+  # 4. Publish GitHub Release
+  # --------------------------------------------------------------------------
+  publish-release:
+    name: Publish Release to GitHub Releases
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Download All Release Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Display Artifacts to Publish
+        run: |
+          echo "=== Release Artifacts Staged for Upload ==="
+          ls -lh release-artifacts/
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: InhausLab ec2pass ${{ github.event.inputs.tag || github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release-artifacts/*.tar.gz
+            release-artifacts/*.zip
+            release-artifacts/*.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

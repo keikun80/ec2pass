@@ -66,13 +66,35 @@ This generates:
 ### Linux Release Package
 On a Linux host (or inside the Vagrant AL2023 environment):
 ```bash
-bash packaging/linux/package.sh
+bash packaging/build_release.sh
 ```
 This generates `dist/ec2pass-v1.0.0-linux-x86_64.tar.gz`.
 
 ### Windows Release Package
 On a Windows host (PowerShell):
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging\windows\package.ps1
+powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1
 ```
-This generates `ec2pass-setup.exe` and `dist\ec2pass-windows-x86_64.zip`.
+This generates `dist\ec2pass-v1.0.0-windows-x86_64.zip`.
+
+---
+
+## 5. Automated CI/CD Release via GitHub Actions
+
+This repository includes a fully automated release pipeline in [`.github/workflows/release.yml`](.github/workflows/release.yml).
+
+When you push a version tag to GitHub:
+```bash
+# 1. Create a release tag
+git tag v1.0.0
+
+# 2. Push the tag to GitHub
+git push origin v1.0.0
+```
+
+GitHub Actions will automatically:
+1. Spin up **Linux (`ubuntu-latest`)**, **macOS (`macos-latest`)**, and **Windows (`windows-latest`)** cloud runners.
+2. Compile and test release binaries on each native platform.
+3. Package `.tar.gz` and `.zip` archives with SHA-256 checksums.
+4. Publish a new release under **GitHub Releases** with all download assets attached.
+

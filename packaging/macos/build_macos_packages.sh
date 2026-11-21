@@ -9,7 +9,8 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-VERSION="1.0.0"
+VERSION="${1:-${VERSION:-1.0.0}}"
+VERSION="${VERSION#v}"
 DIST_DIR="dist"
 mkdir -p "$DIST_DIR" target/universal
 
