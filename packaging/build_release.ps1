@@ -15,7 +15,7 @@ Write-Host "=== Building ec2pass release for $os-$arch ===" -ForegroundColor Cya
 cargo build --workspace --release
 
 # 2. Run test verification
-.\tests\e2e_test.ps1
+cargo test --workspace
 
 # 3. Create dist archive
 $distDir = "dist\ec2pass-v$version-$os-$arch"
