@@ -1,12 +1,12 @@
-//! `alpass` / `multipass` CLI for Amazon Linux 2023.
+//! ec2pass CLI for Amazon Linux 2023.
 //!
-//! 100% command-line compatible with Canonical Multipass, supporting:
+//! Complete command-line interface supporting:
 //! `launch`, `start`, `stop`, `restart`, `suspend`, `delete`, `recover`, `purge`,
 //! `shell`, `exec`, `info`, `list`, `find`, `mount`, `umount`, `transfer`,
 //! `snapshot`, `restore`, `clone`, `get`, `set`, `alias`, `unalias`, `aliases`,
 //! `authenticate`, `networks`, `version`.
 //!
-//! Automatically spawns `alpassd` in the background if the daemon is not already running.
+//! Automatically spawns `ec2passd` in the background if the daemon is not already running.
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -24,7 +24,7 @@ use tokio::net::TcpStream;
 #[command(
     name = "ec2pass",
     version,
-    about = "InhausLab ec2pass - Canonical Multipass-compatible Virtual Machine Orchestrator for Amazon Linux 2023"
+    about = "InhausLab ec2pass - Virtual Machine Orchestrator for Amazon Linux 2023"
 )]
 struct Cli {
     /// Daemon RPC endpoint address
@@ -407,21 +407,21 @@ async fn run_cli() -> Result<()> {
             {
                 match format {
                     OutputFormat::Table => {
-                        println!("{:<14}{}", "multipass", client_version);
-                        println!("{:<14}{}", "multipassd", daemon_version);
+                        println!("{:<14}{}", "ec2pass", client_version);
+                        println!("{:<14}{}", "ec2passd", daemon_version);
                     }
                     OutputFormat::Json => {
                         let json = serde_json::json!({
-                            "multipass": client_version,
-                            "multipassd": daemon_version,
+                            "ec2pass": client_version,
+                            "ec2passd": daemon_version,
                         });
                         println!("{}", serde_json::to_string_pretty(&json)?);
                     }
                     OutputFormat::Yaml => {
-                        println!("multipass: {}\nmultipassd: {}", client_version, daemon_version);
+                        println!("ec2pass: {}\nec2passd: {}", client_version, daemon_version);
                     }
                     OutputFormat::Csv => {
-                        println!("Component,Version\nmultipass,{}\nmultipassd,{}", client_version, daemon_version);
+                        println!("Component,Version\nec2pass,{}\nec2passd,{}", client_version, daemon_version);
                     }
                 }
             }
@@ -625,7 +625,7 @@ async fn run_cli() -> Result<()> {
         }
 
         Commands::Shell { name } => {
-            // Check if instance exists; if not and it's default primary, auto-launch it just like Multipass!
+            // Check if instance exists; if not and it's default primary, auto-launch it
             let shell_resp = match send_rpc(
                 addr,
                 RpcRequest::ShellInfo {

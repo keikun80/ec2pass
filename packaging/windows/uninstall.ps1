@@ -57,10 +57,7 @@ try {
     }
     if (Test-Path $startMenuPrograms) {
         $shortcuts = @(
-            "InhausLab ec2pass.lnk",
-            "Amazon Linux Multipass (ec2pass).lnk",
-            "Amazon Linux Multipass (mp).lnk",
-            "Amazon Linux Multipass (alpass).lnk"
+            "InhausLab ec2pass.lnk"
         )
         foreach ($s in $shortcuts) {
             $shortcutPath = Join-Path $startMenuPrograms $s

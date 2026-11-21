@@ -58,7 +58,7 @@ impl SshManager {
                 "-N",
                 "",
                 "-C",
-                "multipass@al2023-daemon",
+                "ec2pass@al2023-daemon",
                 "-f",
             ])
             .arg(&self.private_key_path)
@@ -75,7 +75,7 @@ impl SshManager {
 
         // Fallback deterministic OpenSSH keypair if ssh-keygen is not in PATH
         let fallback_priv = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACB8w5rF2K7p1m5v9X8q2L3k4j5h6g7f8d9s0a1q2w3e4r5t6y7uAAAAJg\nD19fX19fX19Xssh-ed25519-alpass-daemon-key\n-----END OPENSSH PRIVATE KEY-----\n";
-        let fallback_pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHzDmsXYrunWbm/1fyrYveTiP2HqD9/239sBq1c3e1r1 multipass@al2023-daemon\n";
+        let fallback_pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHzDmsXYrunWbm/1fyrYveTiP2HqD9/239sBq1c3e1r1 ec2pass@al2023-daemon\n";
         std::fs::write(&self.private_key_path, fallback_priv)?;
         std::fs::write(&self.public_key_path, fallback_pub)?;
         self.enforce_key_permissions();
@@ -405,7 +405,7 @@ SUPPORT_END="2029-06-30"
         }
     }
 
-    /// Transfers files or directories between Host and Guest (`multipass transfer`).
+    /// Transfers files or directories between Host and Guest (`ec2pass transfer`).
     pub async fn transfer_path(
         &self,
         instance_dir: &Path,

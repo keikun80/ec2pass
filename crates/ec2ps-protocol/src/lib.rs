@@ -1,4 +1,4 @@
-//! Client-Daemon IPC protocol, RPC messages, instance state models, and Canonical Multipass
+//! Client-Daemon IPC protocol, RPC messages, instance state models, and
 //! output formatters (`table`, `json`, `yaml`, `csv`).
 
 use anyhow::{bail, Result};
@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Default local TCP port for the `ec2passd` / `multipassd` daemon IPC server.
+/// Default local TCP port for the `ec2passd` daemon IPC server.
 pub const DEFAULT_DAEMON_ADDR: &str = "127.0.0.1:50051";
 
 /// Returns the platform-appropriate default IPC daemon address:
@@ -59,7 +59,7 @@ impl std::str::FromStr for OutputFormat {
     }
 }
 
-/// Lifecycle state of an instance, matching Canonical Multipass states 1:1.
+/// Lifecycle state of an instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstanceState {
     Running,
@@ -120,7 +120,7 @@ pub struct SnapshotInfo {
     pub disk_bytes: u64,
 }
 
-/// Host command alias mapped to an instance command (`multipass alias`).
+/// Host command alias mapped to an instance command (`ec2pass alias`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandAlias {
     pub alias_name: String,
@@ -374,7 +374,7 @@ pub fn parse_byte_size(input: &str) -> Result<u64> {
     Ok((value * multiplier) as u64)
 }
 
-/// Formats raw byte count into Multipass-style human string (`1.2GiB`, `412.5MiB`).
+/// Formats raw byte count into human-readable string (`1.2GiB`, `412.5MiB`).
 pub fn format_bytes(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;
@@ -393,7 +393,7 @@ pub fn format_bytes(bytes: u64) -> String {
 }
 
 // ============================================================================
-// Canonical Multipass Output Formatters (Table / JSON / YAML / CSV)
+// Output Formatters (Table / JSON / YAML / CSV)
 // ============================================================================
 
 pub fn format_instance_list(

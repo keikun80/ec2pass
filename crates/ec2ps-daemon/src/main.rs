@@ -1,4 +1,4 @@
-//! `alpassd` (`multipassd` for Amazon Linux 2023) background daemon service.
+//! ec2passd background daemon service.
 //!
 //! Listens for length-delimited JSON-RPC / streaming frames over TCP (`127.0.0.1:50051` by default)
 //! and orchestrates the full Amazon Linux 2023 VM lifecycle:
@@ -31,7 +31,7 @@ use tokio::sync::Mutex;
 #[derive(Parser, Debug)]
 #[command(
     name = "ec2passd",
-    about = "InhausLab ec2pass Daemon - Multipass-compatible Virtual Machine Daemon for Amazon Linux 2023"
+    about = "InhausLab ec2pass Daemon - Virtual Machine Daemon for Amazon Linux 2023"
 )]
 struct DaemonArgs {
     /// Address to bind the daemon RPC server
@@ -444,7 +444,7 @@ async fn dispatch_request(
             let targets = resolve_target_names(&store, &names, all, "primary")?;
             let mut started = Vec::new();
 
-            // If `multipass start` was called with default "primary" and it doesn't exist, error out cleanly
+            // If `ec2pass start` was called with default "primary" and it doesn't exist, error out cleanly
             for name in targets {
                 let rec = store
                     .data
@@ -928,7 +928,7 @@ async fn dispatch_request(
                     single.insert(k, val.clone());
                     return Ok(RpcResponse::SettingsMap(single));
                 }
-                // Prefix match (e.g., `multipass get local`)
+                // Prefix match (e.g., `ec2pass get local`)
                 let prefix = format!("{}.", k);
                 let matched: BTreeMap<String, String> = all_settings
                     .into_iter()
@@ -1011,9 +1011,9 @@ async fn dispatch_request(
                     description: "Host Primary Ethernet Adapter".to_string(),
                 },
                 NetworkInterfaceInfo {
-                    name: "mpqemubr0".to_string(),
+                    name: "ec2psbr0".to_string(),
                     net_type: "bridge".to_string(),
-                    description: "Multipass User-mode NAT Network (10.23.104.0/24)".to_string(),
+                    description: "ec2pass User-mode NAT Network (10.23.104.0/24)".to_string(),
                 },
             ];
             Ok(RpcResponse::NetworkList(nets))

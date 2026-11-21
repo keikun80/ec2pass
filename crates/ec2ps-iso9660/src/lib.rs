@@ -185,9 +185,9 @@ pub fn build_cidata_iso(volume_label: &str, files: &[IsoFile]) -> Result<Vec<u8>
 
     // Volume Set / Publisher / Data Preparer / Application Identifiers
     write_padded_str(&mut pvd[190..318], "");
-    write_padded_str(&mut pvd[318..446], "ALPASS / MULTIPASS FOR AL2023");
+    write_padded_str(&mut pvd[318..446], "EC2PASS FOR AL2023");
     write_padded_str(&mut pvd[446..574], "CLOUD-INIT NOCLOUD SEED GENERATOR");
-    write_padded_str(&mut pvd[574..702], "MP-ISO9660 PURE RUST");
+    write_padded_str(&mut pvd[574..702], "EC2PS-ISO9660 PURE RUST");
     write_padded_str(&mut pvd[702..813], "");
 
     // Dates (17 bytes each): "2026112012000000\0"

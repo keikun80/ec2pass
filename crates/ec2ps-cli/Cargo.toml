@@ -11,10 +11,6 @@ path = "src/lib.rs"
 name = "ec2pass"
 path = "src/bin/ec2pass.rs"
 
-[[bin]]
-name = "multipass"
-path = "src/bin/multipass.rs"
-
 [dependencies]
 ec2ps-protocol = { path = "../ec2ps-protocol" }
 ec2ps-core = { path = "../ec2ps-core" }

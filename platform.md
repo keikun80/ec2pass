@@ -87,6 +87,6 @@ Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
 - **Daemon (`ec2passd`)**:
   - **Linux / macOS**: Listens on Unix Domain Sockets (`/var/run/ec2pass.sock` for system services, or `$XDG_RUNTIME_DIR/ec2pass.sock` for user sessions).
   - **Windows**: Listens on local TCP loopback (`127.0.0.1:50051`) or named pipes.
-- **Client (`ec2pass` / `multipass`)**:
+- **Client (`ec2pass`)**:
   - Connects to the daemon via the unified protocol layer (`ec2ps-protocol`).
   - Transparently handles streaming output for commands such as `exec`, `shell`, and `launch`.

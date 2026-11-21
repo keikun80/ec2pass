@@ -1,11 +1,11 @@
 [Unit]
-Description=Amazon Linux 2023 Multipass Virtual Machine Daemon (mpd)
+Description=InhausLab ec2pass Virtual Machine Daemon (ec2passd)
 Documentation=https://github.com/amazonlinux/amazon-linux-2023
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/mpd --address 127.0.0.1:50051
+ExecStart=/usr/local/bin/ec2passd --address 127.0.0.1:50051
 Restart=always
 RestartSec=5
 User=root

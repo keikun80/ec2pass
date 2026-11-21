@@ -1,5 +1,5 @@
 # ==============================================================================
-# Amazon Linux 2023 Multipass (mp) Git Ignore
+# InhausLab ec2pass Git Ignore
 # ==============================================================================
 
 # Rust compiler and Cargo build artifacts

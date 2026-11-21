@@ -36,8 +36,8 @@ pkill -9 -f ec2passd 2>/dev/null || true
 
 # 4. Remove Binaries
 INSTALL_DIR="/usr/local/bin"
-rm -f "$INSTALL_DIR/ec2pass" "$INSTALL_DIR/ec2passd" "$INSTALL_DIR/multipass"
-echo -e "${GREEN}Removed binaries from $INSTALL_DIR (ec2pass, ec2passd, multipass).${NC}"
+rm -f "$INSTALL_DIR/ec2pass" "$INSTALL_DIR/ec2passd"
+echo -e "${GREEN}Removed binaries from $INSTALL_DIR (ec2pass, ec2passd).${NC}"
 
 # 5. Optional Data Purge
 if [ "$PURGE_DATA" = true ]; then

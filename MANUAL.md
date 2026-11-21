@@ -1,8 +1,8 @@
-# InhausLab ec2pass (`ec2pass` / `multipass`) CLI Manual
+# InhausLab ec2pass CLI Manual
 
-This manual provides a complete reference for all subcommands, options, output formats, and recipes in **InhausLab ec2pass**, an Amazon Linux 2023 virtualization orchestrator providing 100% command-line compatibility with Canonical Multipass.
+This manual provides a complete reference for all subcommands, options, output formats, and recipes in **InhausLab ec2pass**, an Amazon Linux 2023 virtualization orchestrator.
 
-> **[Notice]** `InhausLab ec2pass` is an independent, clean-room open-source project and is not affiliated with, endorsed by, or sponsored by Canonical Ltd. or Amazon Web Services, Inc. The `multipass` binary is provided strictly as a drop-in compatibility alias for migration convenience. See [Section 4. Legal Notice & Trademark Disclaimer](#4-legal-notice--trademark-disclaimer).
+> **[Notice]** `InhausLab ec2pass` is an independent open-source project designed for running official Amazon Linux 2023 virtual machines locally with native hardware hypervisors. See [Section 4. Legal Notice & Trademark Disclaimer](#4-legal-notice--trademark-disclaimer).
 
 ---
 
@@ -14,7 +14,7 @@ ec2pass [OPTIONS] <COMMAND>
 
 | Option | Environment Variable | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--daemon-addr <ADDR>` | `MP_DAEMON_ADDR` | `127.0.0.1:50051` | Address or socket of the background daemon (`ec2passd`) |
+| `--daemon-addr <ADDR>` | `EC2PASS_DAEMON_ADDR` | `127.0.0.1:50051` | Address or socket of the background daemon (`ec2passd`) |
 | `-v, --verbose` | - | 0 | Increase logging verbosity (`-v`, `-vv`, `-vvv`) |
 | `-h, --help` | - | - | Print help information |
 | `-V, --version` | - | - | Print version information |
@@ -329,22 +329,12 @@ ec2pass exec dev-env -d /home/ec2-user/service -- cargo test
 
 ## 4. Legal Notice & Trademark Disclaimer
 
-### 4.1 Trademark Notice & Non-Affiliation
-* **Multipass** and **Ubuntu** are registered trademarks or trademarks of Canonical Ltd.
-* **InhausLab ec2pass** is an independent third-party open-source project and is not affiliated with, sponsored by, or endorsed by Canonical Ltd.
-* References to "Multipass" and "Ubuntu" are made strictly for identification, technical compatibility, and interoperability purposes under **Nominative Fair Use**.
-
-### 4.2 Drop-in Compatibility Alias Statement
-* The `multipass` executable provided in release bundles is not intended to claim brand ownership. It is provided strictly as a **functional drop-in compatibility alias** to enable seamless script migration and workflow continuity for existing Multipass users.
-* The official product name is **`InhausLab ec2pass`**.
-
-### 4.3 Copyright & Clean-Room Implementation
-* This software does not copy or contain Canonical's C++ source code. It is an independent, clean-room implementation written 100% in Rust based on public specifications and protocol observations.
-* Command-line interfaces and syntactic compatibility fall under fair use principles for functional interoperability (*Google LLC v. Oracle America, Inc.*).
-
-### 4.4 Amazon Linux Trademark Notice
+### 4.1 Amazon Linux & AWS Trademark Notice
 * **Amazon Linux**, **Amazon Web Services**, **AWS**, and **EC2** are trademarks of Amazon.com, Inc. or its affiliates.
 * This project downloads and runs official Amazon Linux KVM images from public AWS mirrors and does not imply an official partnership or endorsement.
+
+### 4.2 Copyright & Clean-Room Implementation
+* **InhausLab ec2pass** is an independent, clean-room implementation written 100% in Rust based on public specifications.
 
 ---
 
@@ -411,7 +401,7 @@ sudo ./packaging/macos/uninstall.sh --purge-data
 ```text
 ┌────────────────────────────────────────────────────────┐
 │  1. Program Binary Directory (Install Directory)       │
-│  - ec2pass, ec2passd, multipass                        │
+│  - ec2pass, ec2passd                                   │
 │  - Uninstaller scripts, documentation                   │
 └────────────────────────────────────────────────────────┘
                            ▲

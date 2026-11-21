@@ -367,7 +367,6 @@ name = "ec2ps-iso9660"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "chrono",
 ]
 
 [[package]]
@@ -379,7 +378,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "tokio",
 ]
 
 [[package]]

@@ -23,7 +23,6 @@ if (Test-Path $archiveName) { Remove-Item -Path $archiveName -Force }
 New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 
 Copy-Item target\release\ec2pass.exe "$distDir\"
-Copy-Item target\release\multipass.exe "$distDir\"
 Copy-Item target\release\ec2passd.exe "$distDir\"
 Copy-Item packaging\windows\install.ps1 "$distDir\"
 Copy-Item packaging\windows\Setup.bat "$distDir\"

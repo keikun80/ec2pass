@@ -32,12 +32,8 @@ lipo -create -output target/universal/ec2passd \
     target/x86_64-apple-darwin/release/ec2passd \
     target/aarch64-apple-darwin/release/ec2passd
 
-lipo -create -output target/universal/multipass \
-    target/x86_64-apple-darwin/release/multipass \
-    target/aarch64-apple-darwin/release/multipass
-
 echo -e "  ${GREEN}✓ Universal binaries created in target/universal/${NC}"
-file target/universal/ec2pass target/universal/ec2passd target/universal/multipass
+file target/universal/ec2pass target/universal/ec2passd
 
 # 3. Helper function to create .tar.gz package
 package_target() {
@@ -53,14 +49,13 @@ package_target() {
 
     cp "$BIN_DIR/ec2pass" "$STAGE/"
     cp "$BIN_DIR/ec2passd" "$STAGE/"
-    cp "$BIN_DIR/multipass" "$STAGE/"
 
     cp packaging/macos/com.inhauslab.ec2passd.plist "$STAGE/"
     cp packaging/macos/install.sh "$STAGE/"
     cp packaging/macos/uninstall.sh "$STAGE/"
     cp README.md MANUAL.md BUILD_AND_RELEASE.md platform.md USERDATA.md "$STAGE/"
 
-    chmod 755 "$STAGE/install.sh" "$STAGE/uninstall.sh" "$STAGE/ec2pass" "$STAGE/ec2passd" "$STAGE/multipass"
+    chmod 755 "$STAGE/install.sh" "$STAGE/uninstall.sh" "$STAGE/ec2pass" "$STAGE/ec2passd"
 
     tar -czvf "$ARCHIVE" -C "$DIST_DIR" "$PKG_NAME"
 

@@ -37,7 +37,6 @@ mkdir -p "$STAGE_DIR"
 
 cp target/release/ec2pass "$STAGE_DIR/"
 cp target/release/ec2passd "$STAGE_DIR/"
-cp target/release/multipass "$STAGE_DIR/"
 
 if [ "$OS" = "linux" ]; then
     cp packaging/linux/ec2passd.service "$STAGE_DIR/"

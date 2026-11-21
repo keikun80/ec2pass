@@ -1,11 +1,11 @@
-# InhausLab ec2pass (`ec2pass` / `multipass`)
-## Cross-Platform Porting & Implementation Plan for Linux and macOS
+# InhausLab ec2pass
+## Cross-Platform Architecture for Linux and macOS
 
 ---
 
 ## 1. Overview & Objectives
 
-This document outlines the architecture and execution plan for expanding **InhausLab ec2pass (`ec2pass` / `multipass`)**, the Amazon Linux 2023 virtualization orchestrator, across **Linux (KVM)**, **macOS (Apple Silicon M-series & Intel HVF)**, and **Windows (Hyper-V / WHPX)** from a single, unified Rust codebase while ensuring 100% CLI parity with Canonical Multipass.
+This document outlines the architecture and execution plan for expanding **InhausLab ec2pass**, the Amazon Linux 2023 virtualization orchestrator, across **Linux (KVM)**, **macOS (Apple Silicon M-series & Intel HVF)**, and **Windows (Hyper-V / WHPX)** from a single, unified Rust codebase with a consistent CLI experience.
 
 ```mermaid
 flowchart TD

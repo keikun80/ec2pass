@@ -82,22 +82,16 @@ mkdir -p "$INSTALL_DIR"
 if [ -f "./target/release/ec2pass" ]; then
     cp "./target/release/ec2pass" "$INSTALL_DIR/ec2pass"
     cp "./target/release/ec2passd" "$INSTALL_DIR/ec2passd"
-    cp "./target/release/multipass" "$INSTALL_DIR/multipass"
 elif [ -f "./ec2pass" ]; then
     cp "./ec2pass" "$INSTALL_DIR/ec2pass"
     cp "./ec2passd" "$INSTALL_DIR/ec2passd"
-    if [ -f "./multipass" ]; then
-        cp "./multipass" "$INSTALL_DIR/multipass"
-    else
-        ln -sf "$INSTALL_DIR/ec2pass" "$INSTALL_DIR/multipass"
-    fi
 else
     echo -e "${RED}Error: ec2pass binaries not found in current directory or target/release.${NC}" >&2
     exit 1
 fi
 
-chmod 755 "$INSTALL_DIR/ec2pass" "$INSTALL_DIR/ec2passd" "$INSTALL_DIR/multipass"
-echo -e "  ${GREEN}✓ Installed ec2pass, multipass, ec2passd to $INSTALL_DIR${NC}"
+chmod 755 "$INSTALL_DIR/ec2pass" "$INSTALL_DIR/ec2passd"
+echo -e "  ${GREEN}✓ Installed ec2pass, ec2passd to $INSTALL_DIR${NC}"
 
 # 5. Install and Start Systemd Service
 echo -e "\n${CYAN}[3/4] Configuring ec2passd systemd background service...${NC}"

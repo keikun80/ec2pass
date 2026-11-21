@@ -1,6 +1,6 @@
 # Build and Release Guide
 
-This document describes the compilation prerequisites, build procedures, and release packaging workflows for **InhausLab ec2pass** (`ec2pass` / `multipass`) across Windows, macOS, and Linux.
+This document describes the compilation prerequisites, build procedures, and release packaging workflows for **InhausLab ec2pass** across Windows, macOS, and Linux.
 
 ---
 
@@ -35,15 +35,6 @@ This generates the following binaries in `target/release/`:
 - `ec2pass` (CLI client)
 - `ec2passd` (Daemon server)
 
-Create the drop-in `multipass` compatibility alias:
-```bash
-# On Unix (macOS / Linux):
-ln -sf ec2pass target/release/multipass
-
-# On Windows (PowerShell):
-Copy-Item target\release\ec2pass.exe target\release\multipass.exe
-```
-
 ---
 
 ## 3. Running Tests
@@ -67,17 +58,17 @@ The repository includes automated packaging scripts in `packaging/`:
 ### macOS Universal 2 Binary Package
 Builds both `x86_64-apple-darwin` and `aarch64-apple-darwin` targets and bundles them using `lipo`:
 ```bash
-./packaging/build_release.sh
+./packaging/macos/build_macos_packages.sh
 ```
 This generates:
-- `dist/ec2pass-macos-universal.tar.gz` containing `ec2pass`, `ec2passd`, `multipass`, and `packaging/macos/install.sh`.
+- `dist/ec2pass-v1.0.0-darwin-universal.tar.gz` containing `ec2pass`, `ec2passd`, documentation, and `packaging/macos/install.sh`.
 
 ### Linux Release Package
 On a Linux host (or inside the Vagrant AL2023 environment):
 ```bash
 bash packaging/linux/package.sh
 ```
-This generates `dist/ec2pass-linux-x86_64.tar.gz`.
+This generates `dist/ec2pass-v1.0.0-linux-x86_64.tar.gz`.
 
 ### Windows Release Package
 On a Windows host (PowerShell):

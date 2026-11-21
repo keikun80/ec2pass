@@ -8,13 +8,11 @@ pub mod state;
 
 use std::path::PathBuf;
 
-/// Returns the data directory for `ec2passd` / `multipassd`.
-/// Can be overridden via `EC2PASS_HOME` or `MULTIPASS_STORAGE` environment variables.
+/// Returns the data directory for `ec2passd`.
+/// Can be overridden via `EC2PASS_HOME` environment variable.
 pub fn default_data_dir() -> PathBuf {
     if let Ok(custom) = std::env::var("EC2PASS_HOME")
-        .or_else(|_| std::env::var("MP_HOME"))
-        .or_else(|_| std::env::var("MULTIPASS_STORAGE"))
-        .or_else(|_| std::env::var("ALPASS_HOME"))
+        .or_else(|_| std::env::var("EC2PS_HOME"))
     {
         return PathBuf::from(custom);
     }

@@ -32,7 +32,7 @@ New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 Write-Host "Compiling release binaries with cargo build --workspace --release..." -ForegroundColor Cyan
 cargo build --workspace --release
 
-$binFiles = @("ec2pass.exe", "multipass.exe", "ec2passd.exe")
+$binFiles = @("ec2pass.exe", "ec2passd.exe")
 foreach ($b in $binFiles) {
     $src = Join-Path $rootDir "target\release\$b"
     if (-not (Test-Path $src)) {
@@ -98,14 +98,13 @@ UserQuietInstCmd=powershell.exe -ExecutionPolicy Bypass -File install.ps1 -Silen
 SourceFiles=SourceFiles
 [Strings]
 FILE0=ec2pass.exe
-FILE1=multipass.exe
-FILE2=ec2passd.exe
-FILE3=install.ps1
-FILE4=Setup.bat
-FILE5=uninstall.ps1
-FILE6=Uninstall.bat
-FILE7=MANUAL.md
-FILE8=README.md
+FILE1=ec2passd.exe
+FILE2=install.ps1
+FILE3=Setup.bat
+FILE4=uninstall.ps1
+FILE5=Uninstall.bat
+FILE6=MANUAL.md
+FILE7=README.md
 [SourceFiles]
 SourceFiles0=$stageDir\
 [SourceFiles0]
@@ -117,7 +116,6 @@ SourceFiles0=$stageDir\
 %FILE5%=
 %FILE6%=
 %FILE7%=
-%FILE8%=
 "@
 
 [System.IO.File]::WriteAllText($sedFilePath, $sedContent, [System.Text.Encoding]::ASCII)

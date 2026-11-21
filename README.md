@@ -1,19 +1,19 @@
-# InhausLab ec2pass (`ec2pass` / `multipass`)
+# InhausLab ec2pass
 
 [![Rust](https://img.shields.io/badge/rust-2021_edition-orange.svg)](https://www.rust-lang.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support)
 
-**InhausLab ec2pass** is a high-performance, lightweight virtualization orchestrator written in 100% pure Rust, designed to run official Amazon Web Services (AWS) **Amazon Linux 2023 (AL2023)** images with **100% CLI drop-in compatibility for Canonical Multipass**.
+**InhausLab ec2pass** is a high-performance, lightweight virtualization orchestrator written in 100% pure Rust, designed to run official Amazon Web Services (AWS) **Amazon Linux 2023 (AL2023)** images with a modern, intuitive command-line interface.
 
-> **[Notice]** `InhausLab ec2pass` is an independent, clean-room open-source project and is not affiliated with, endorsed by, or sponsored by Canonical Ltd. or Amazon Web Services, Inc. The `multipass` binary is provided strictly as a drop-in compatibility alias for migration convenience. See [Legal Notice & Trademark Disclaimer](#legal-notice--trademark-disclaimer).
+> **[Notice]** `InhausLab ec2pass` is an independent, clean-room open-source project and is not affiliated with, endorsed by, or sponsored by Amazon Web Services, Inc. See [Legal Notice & Trademark Disclaimer](#legal-notice--trademark-disclaimer).
 
 ---
 
 ## Key Features
 
-- **100% Multipass CLI Compatibility**: Full drop-in replacement supporting `find`, `launch`, `list`, `info`, `exec`, `shell`, `start`, `stop`, `restart`, `suspend`, `transfer`, `mount`, `umount`, `snapshot`, `restore`, `clone`, `delete`, `recover`, `purge`, `get`, `set`, `alias`, `unalias`, `aliases`, and `networks`.
-- **Pure Rust Architecture**: Clean-room implementation with zero dependencies on Canonical C++ code, built on the modern Rust 2021 edition.
+- **Full-Featured Cloud Instance CLI**: Complete VM lifecycle management supporting `find`, `launch`, `list`, `info`, `exec`, `shell`, `start`, `stop`, `restart`, `suspend`, `transfer`, `mount`, `umount`, `snapshot`, `restore`, `clone`, `delete`, `recover`, `purge`, `get`, `set`, `alias`, `unalias`, `aliases`, and `networks`.
+- **Pure Rust Architecture**: Clean-room implementation built on the modern Rust 2021 edition.
 - **Pure Rust ISO9660 / NoCloud Engine**: Built-in `ec2ps-iso9660` generates Rock Ridge / Joliet `cidata` seed ISOs directly in memory with zero external utilities (`mkisofs`, `genisoimage`, or `xorriso` are not required).
 - **Official AWS AL2023 Images**: Automatically discovers and streams official AWS KVM images from the AWS CDN, verifying SHA256 checksums and caching them locally.
 - **Strict Native Hypervisors (No Simulation)**:
@@ -32,7 +32,7 @@
 ec2pass/
 ├── crates/
 │   ├── ec2ps-core/        # Virtualization engine, QEMU hypervisor driver, image cache & cloud-init
-│   ├── ec2ps-cli/         # CLI client binary (compiled as ec2pass & multipass)
+│   ├── ec2ps-cli/         # CLI client binary (ec2pass)
 │   ├── ec2ps-daemon/      # Background virtualization management service (ec2passd)
 │   ├── ec2ps-protocol/    # IPC protocol definitions (JSON-RPC over TCP / Unix Domain Sockets)
 │   └── ec2ps-iso9660/     # Pure Rust ISO9660 / Rock Ridge generator for cloud-init NoCloud seed.iso
@@ -113,6 +113,5 @@ See [BUILD_AND_RELEASE.md](file:///Users/jason/project/ec2pass/BUILD_AND_RELEASE
 
 ## Legal Notice & Trademark Disclaimer
 
-1. **Multipass & Ubuntu**: Multipass and Ubuntu are registered trademarks of Canonical Ltd. `InhausLab ec2pass` is an independent third-party project with no corporate affiliation, endorsement, or sponsorship from Canonical Ltd. The `multipass` binary is provided solely as a nominative fair use compatibility alias to facilitate workflow transition.
-2. **Amazon Linux & AWS**: Amazon Linux, AWS, and EC2 are trademarks of Amazon.com, Inc. or its affiliates. Official AL2023 KVM images are fetched directly from public AWS distribution mirrors according to AWS terms.
-3. **Clean-Room Implementation**: All code in this repository was authored from scratch in Rust based on public documentation and protocol analysis, without utilizing Canonical's C++ source code.
+1. **Amazon Linux & AWS**: Amazon Linux, AWS, and EC2 are trademarks of Amazon.com, Inc. or its affiliates. Official AL2023 KVM images are fetched directly from public AWS distribution mirrors according to AWS terms.
+2. **Clean-Room Implementation**: All code in this repository was authored from scratch in Rust based on public documentation and protocol analysis.

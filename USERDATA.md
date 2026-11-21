@@ -1,6 +1,6 @@
 # Testing Shell Scripts and cloud-init user-data
 
-This document describes how to test and validate custom shell scripts and `cloud-init` user-data configurations in Amazon Linux 2023 using **InhausLab ec2pass** (`ec2pass` / `multipass`).
+This document describes how to test and validate custom shell scripts and `cloud-init` user-data configurations in Amazon Linux 2023 using **InhausLab ec2pass**.
 
 ---
 
@@ -20,7 +20,7 @@ Depending on what stage of development you are in, choose the most effective app
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
-│ Method A: End-to-End Boot Test (Full cloud-init simulation)            │
+│ Method A: End-to-End Boot Test (Full cloud-init execution)             │
 │  - Command: ec2pass launch al2023 --cloud-init ./user-data.txt        │
 │  - Best for: Testing official EC2 launch behavior from cold start      │
 ├────────────────────────────────────────────────────────────────────────┤

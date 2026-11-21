@@ -1,4 +1,4 @@
-//! Canonical Multipass-style random instance petname generator (`adjective-animal`).
+//! Random instance petname generator (`adjective-animal`).
 
 use rand::seq::SliceRandom;
 

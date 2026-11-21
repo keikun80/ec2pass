@@ -61,7 +61,7 @@ pub struct StateStore {
 impl StateStore {
     pub fn load_or_create(data_dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(data_dir)?;
-        let state_file = data_dir.join("multipassd-state.json");
+        let state_file = data_dir.join("state.json");
         let data = if state_file.exists() {
             let content = std::fs::read_to_string(&state_file)
                 .with_context(|| format!("Failed to read state file {:?}", state_file))?;
@@ -91,7 +91,7 @@ impl StateStore {
         (ssh, qmp)
     }
 
-    /// Generates a deterministic virtual guest IPv4 in the 10.23.104.x/24 Multipass subnet
+    /// Generates a deterministic virtual guest IPv4 in the 10.23.104.x/24 ec2pass subnet
     pub fn allocate_guest_ip(&self) -> String {
         let host_id = 10 + (self.data.instances.len() % 230);
         format!("10.23.104.{}", host_id)
@@ -129,7 +129,7 @@ impl StateStore {
     }
 
     /// Updates a setting in the tree. Supports modifying `local.<instance>.(cpus|memory|disk)`
-    /// when the instance is `Stopped`, matching Canonical Multipass behavior.
+    /// when the instance is `Stopped`.
     pub fn set_setting(&mut self, key: &str, value: &str) -> Result<()> {
         let parts: Vec<&str> = key.split('.').collect();
         if parts.len() == 3 && parts[0] == "local" {

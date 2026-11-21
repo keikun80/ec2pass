@@ -4,7 +4,7 @@
 //! - `https://cdn.amazonlinux.com/al2023/os-images/latest/kvm/`
 //! - `https://cdn.amazonlinux.com/al2023/os-images/latest/kvm-arm64/`
 //!
-//! Also provides built-in curated catalog entries so `multipass find` and offline/mock launches
+//! Also provides built-in curated catalog entries so `ec2pass find` and offline/mock launches
 //! work out-of-the-box even in air-gapped or sandboxed environments.
 
 use anyhow::{bail, Context, Result};

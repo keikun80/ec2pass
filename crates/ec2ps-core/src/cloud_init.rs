@@ -1,6 +1,6 @@
 //! Amazon Linux 2023 NoCloud `cloud-init` metadata, vendor-data, and user-data generator.
 //!
-//! Canonical Multipass injects a `cidata` ISO (`seed.iso`) into every VM containing:
+//! ec2pass injects a `cidata` ISO (`seed.iso`) into every VM containing:
 //! 1. `meta-data`: instance-id and local-hostname.
 //! 2. `vendor-data`: daemon-managed SSH public key (`ec2-user` + `ubuntu` alias), passwordless sudo,
 //!    `growpart` / `xfs_growfs` for root disk resizing, and SELinux context restoration.
@@ -18,8 +18,7 @@ pub struct CloudInitConfig<'a> {
     pub user_data_yaml: Option<&'a str>,
 }
 
-/// Validates user-supplied `--cloud-init` YAML syntax before launching the instance,
-/// matching Canonical Multipass's pre-flight cloud-init validator.
+/// Validates user-supplied `--cloud-init` YAML syntax before launching the instance.
 pub fn validate_cloud_init_yaml(yaml_str: &str) -> Result<()> {
     let trimmed = yaml_str.trim();
     if trimmed.is_empty() {
@@ -52,7 +51,7 @@ resize_rootfs: true
 users:
   - default
   - name: {user}
-    gecos: Amazon Linux 2023 Multipass User
+    gecos: Amazon Linux 2023 ec2pass User
     sudo: ALL=(ALL) NOPASSWD:ALL
     groups: [wheel, adm, systemd-journal]
     shell: /bin/bash

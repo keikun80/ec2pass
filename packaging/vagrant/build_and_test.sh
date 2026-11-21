@@ -49,11 +49,10 @@ cargo test --workspace
 echo -e "\n${YELLOW}[Step 4/5] Staging binaries to /usr/local/bin...${NC}"
 sudo cp "$CARGO_TARGET_DIR/release/ec2pass" "/usr/local/bin/ec2pass"
 sudo cp "$CARGO_TARGET_DIR/release/ec2passd" "/usr/local/bin/ec2passd"
-sudo cp "$CARGO_TARGET_DIR/release/multipass" "/usr/local/bin/multipass"
-sudo chmod 755 /usr/local/bin/ec2pass /usr/local/bin/ec2passd /usr/local/bin/multipass
+sudo chmod 755 /usr/local/bin/ec2pass /usr/local/bin/ec2passd
 
 echo -e "Installed binaries:"
-ls -lh /usr/local/bin/ec2pass* /usr/local/bin/multipass
+ls -lh /usr/local/bin/ec2pass*
 
 echo -e "\n${YELLOW}[Step 5/5] Executing 7-Stage End-to-End (E2E) Test Suite...${NC}"
 export EC2PASS_BIN="/usr/local/bin/ec2pass"

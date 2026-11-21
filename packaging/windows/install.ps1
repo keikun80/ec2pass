@@ -113,14 +113,9 @@ if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 }
 
-$filesToCopy = @("ec2pass.exe", "multipass.exe", "ec2passd.exe")
+$filesToCopy = @("ec2pass.exe", "ec2passd.exe")
 foreach ($f in $filesToCopy) {
     $src = Join-Path $binSource $f
-    if (-not (Test-Path $src)) {
-        if ($f -eq "multipass.exe" -and (Test-Path (Join-Path $binSource "ec2pass.exe"))) {
-            $src = Join-Path $binSource "ec2pass.exe"
-        }
-    }
     if (Test-Path $src) {
         Copy-Item -Path $src -Destination (Join-Path $InstallDir $f) -Force
         Write-Host "  Installed: $f" -ForegroundColor Green
