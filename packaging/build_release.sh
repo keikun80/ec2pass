@@ -35,8 +35,12 @@ ARCHIVE_PATH="${DIST_ROOT}/${PACKAGE_NAME}.tar.gz"
 
 mkdir -p "$STAGE_DIR"
 
-cp target/release/ec2pass "$STAGE_DIR/"
-cp target/release/ec2passd "$STAGE_DIR/"
+TARGET_RELEASE_DIR="${CARGO_TARGET_DIR:-target}/release"
+if [ ! -f "$TARGET_RELEASE_DIR/ec2pass" ] && [ -f "target/release/ec2pass" ]; then
+    TARGET_RELEASE_DIR="target/release"
+fi
+cp "$TARGET_RELEASE_DIR/ec2pass" "$STAGE_DIR/"
+cp "$TARGET_RELEASE_DIR/ec2passd" "$STAGE_DIR/"
 
 if [ "$OS" = "linux" ]; then
     cp packaging/linux/ec2passd.service "$STAGE_DIR/"

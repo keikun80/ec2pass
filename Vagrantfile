@@ -5,8 +5,8 @@
 Vagrant.require_version ">= 2.2.0"
 
 Vagrant.configure("2") do |config|
-  # Base Box: Enterprise Linux 9 / AL2023 compatible (generic/alma9 supports Hyper-V, VirtualBox, KVM)
-  config.vm.box = ENV["VAGRANT_BOX"] || "generic/alma9"
+  # Base Box: Amazon Linux 2023 / Enterprise Linux 9
+  config.vm.box = ENV["VAGRANT_BOX"] || "bento/amazonlinux-2023"
   config.vm.hostname = "ec2pass-al2023"
 
   # Forward daemon RPC port (50051) for optional host-to-guest debugging

@@ -9,19 +9,20 @@ echo "================================================================"
 # 1. Update and install development tools
 echo "[1/4] Installing C/C++ toolchains, kernel headers, and build tools..."
 dnf install -y epel-release 2>/dev/null || true
-dnf groupinstall -y "Development Tools"
+dnf groupinstall -y "Development Tools" 2>/dev/null || true
 dnf install -y \
     gcc \
     gcc-c++ \
     make \
-    pkg-config \
+    pkgconf \
+    pkgconf-pkg-config \
     openssl-devel \
     git \
     curl \
     wget \
     tar \
     which \
-    ca-certificates
+    ca-certificates || true
 
 # 2. Install QEMU, KVM, and virtualization packages
 echo "[2/4] Installing QEMU, KVM, and image utilities..."

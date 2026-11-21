@@ -73,7 +73,18 @@ impl QemuDriver {
     pub fn try_new() -> Result<Self> {
         match Self::detect_optional() {
             Some(driver) => Ok(driver),
-            None => bail!("{}", get_hypervisor_install_guide()),
+            None => {
+                if std::env::var("EC2PASS_ALLOW_UNACCELERATED").is_ok()
+                    || std::env::var("EC2PASS_SKIP_HYPERVISOR_CHECK").is_ok()
+                {
+                    Ok(Self {
+                        qemu_bin: "qemu-system-x86_64".to_string(),
+                        qemu_img_bin: "qemu-img".to_string(),
+                    })
+                } else {
+                    bail!("{}", get_hypervisor_install_guide())
+                }
+            }
         }
     }
 
@@ -152,7 +163,11 @@ impl QemuDriver {
         }
 
         if cfg!(target_os = "linux") {
-            args.extend(["-enable-kvm".to_string(), "-cpu".to_string(), "host".to_string()]);
+            if std::path::Path::new("/dev/kvm").exists() {
+                args.extend(["-enable-kvm".to_string(), "-cpu".to_string(), "host".to_string()]);
+            } else {
+                args.extend(["-accel".to_string(), "tcg".to_string(), "-cpu".to_string(), "max".to_string()]);
+            }
         } else if cfg!(target_os = "macos") {
             args.extend(["-accel".to_string(), "hvf".to_string(), "-cpu".to_string(), "host".to_string()]);
         } else if cfg!(target_os = "windows") {

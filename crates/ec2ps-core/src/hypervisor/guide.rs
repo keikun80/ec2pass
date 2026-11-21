@@ -15,70 +15,70 @@ pub fn get_hypervisor_install_guide() -> &'static str {
 
 pub const LINUX_GUIDE: &str = r#"
 ================================================================================
-[필수 요구사항 미충족] Linux 하이퍼바이저(KVM)가 감지되지 않았습니다.
-ec2pass는 안전한 격리 및 가상 머신 구동을 위해 KVM 하이퍼바이저가 필수입니다.
-(시뮬레이션 모드는 지원되지 않습니다.)
+[PREREQUISITE MISSING] Linux KVM hypervisor (/dev/kvm) was not detected.
+ec2pass requires the hardware KVM hypervisor for secure isolation and VM execution.
+(Simulation/mock mode is not supported).
 
-▶ 해결 방법 (아래 명령어를 실행하세요):
-  1. 배포판별 패키지 설치:
+▶ Resolution steps:
+  1. Install QEMU and KVM packages for your distribution:
      • Ubuntu / Debian:
        sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-utils libvirt-daemon-system
-     • RHEL / Fedora / Amazon Linux 2023:
+     • RHEL / Fedora / Rocky / AlmaLinux:
        sudo dnf install -y qemu-kvm qemu-img
      • Arch Linux:
        sudo pacman -S qemu-full
 
-  2. 현재 사용자를 kvm 그룹에 추가:
+  2. Add current user to the kvm group:
      sudo usermod -aG kvm $USER
      newgrp kvm
 
-  3. KVM 커널 모듈 활성화 확인:
+  3. Verify KVM kernel module:
      ls -l /dev/kvm
-     (만약 /dev/kvm이 여전히 나타나지 않는다면, PC 부팅 시 BIOS/UEFI에서
-      Intel VT-x 또는 AMD-V 가상화 지원이 활성화되어 있는지 확인하세요.)
+     (If /dev/kvm is still absent, ensure Intel VT-x or AMD-V virtualization
+      is enabled in your system's BIOS/UEFI settings).
 ================================================================================
 "#;
 
 pub const MACOS_GUIDE: &str = r#"
 ================================================================================
-[필수 요구사항 미충족] macOS 가상화 엔진(QEMU)이 감지되지 않았습니다.
-ec2pass는 macOS의 커널 Hypervisor.framework (HVF) 하드웨어 가속을 활용하기 위해
-QEMU(qemu-system-x86_64 / qemu-system-aarch64)가 필수입니다.
-(시뮬레이션 모드는 지원되지 않습니다.)
+[PREREQUISITE MISSING] macOS virtualization engine (QEMU) was not detected.
+ec2pass requires QEMU (qemu-system-x86_64 or qemu-system-aarch64) to leverage
+the macOS kernel Hypervisor.framework (HVF) hardware acceleration.
+(Simulation/mock mode is not supported).
 
-▶ 해결 방법 (아래 명령어를 터미널에서 실행하세요):
-  Homebrew를 통해 QEMU를 설치해 주세요:
+▶ Resolution steps:
+  Install QEMU via Homebrew:
     brew install qemu
 
-  설치 확인:
+  Verify installation:
     qemu-img --version
 ================================================================================
 "#;
 
 pub const WINDOWS_GUIDE: &str = r#"
 ================================================================================
-[필수 요구사항 미충족] Windows 하이퍼바이저(Hyper-V / WHPX)가 감지되지 않았습니다.
-ec2pass는 Windows에서 하드웨어 수준의 가상화를 위해 Hyper-V 또는 WHPX가 필수입니다.
-(시뮬레이션 모드는 지원되지 않습니다.)
+[PREREQUISITE MISSING] Windows hypervisor (Hyper-V / WHPX) was not detected.
+ec2pass requires Hyper-V or WHPX hardware acceleration on Windows.
+(Simulation/mock mode is not supported).
 
-▶ 해결 방법 (아래 중 하나를 진행하세요):
-  1. [권장] Hyper-V 기능 활성화 (Windows Pro / Enterprise):
-     관리자 권한 PowerShell을 열고 다음 명령 실행 후 재부팅:
+▶ Resolution steps (choose one option below):
+  1. [Recommended] Enable Hyper-V (Windows Pro / Enterprise):
+     Open an Administrator PowerShell and run:
        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
 
-  2. [대안 1] Windows 하이퍼바이저 플랫폼 (WHPX) 활성화 (Windows Home 등):
-     관리자 권한 PowerShell을 열고 다음 명령 실행 후 재부팅:
+  2. [Alternative] Enable Windows Hypervisor Platform (WHPX):
+     Open an Administrator PowerShell and run:
        Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All
 
-  3. [대안 2] QEMU 설치 (WHPX 가속 연동):
+  3. Install QEMU for Windows:
      winget install SoftwareFreedomConservancy.QEMU
-     (또는 choco install qemu)
 ================================================================================
 "#;
 
 pub const GENERIC_GUIDE: &str = r#"
 ================================================================================
-[필수 요구사항 미충족] 지원되는 하이퍼바이저(KVM, HVF, Hyper-V)를 찾을 수 없습니다.
-ec2pass는 하드웨어 가상화 지원이 필수입니다. 호스트 운영체제에 맞는 가상화 엔진을 설치해 주세요.
+[PREREQUISITE MISSING] Supported hypervisor (KVM, HVF, Hyper-V) was not found.
+ec2pass requires hardware virtualization support. Please install the appropriate
+virtualization engine for your host operating system.
 ================================================================================
 "#;
