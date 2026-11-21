@@ -53,9 +53,9 @@ fi
 
 if [ "$KVM_READY" = false ] || [ "$QEMU_READY" = false ]; then
     echo -e "\n${RED}================================================================${NC}"
-    echo -e "${RED}[ERROR] 필수 하이퍼바이저(KVM) 요구사항이 충족되지 않았습니다.${NC}"
-    echo -e "ec2pass는 시뮬레이션 없이 실제 하드웨어 가상화를 필수로 요구합니다."
-    echo -e "\n${YELLOW}▶ 해결 방법 (아래 명령어를 실행하여 KVM 및 QEMU를 설치하세요):${NC}"
+    echo -e "${RED}[ERROR] Required hypervisor (KVM) prerequisites are not met.${NC}"
+    echo -e "ec2pass strictly requires hardware virtualization without simulation."
+    echo -e "\n${YELLOW}▶ Resolution (install KVM and QEMU using commands below):${NC}"
     if command -v apt-get >/dev/null 2>&1; then
         echo -e "  sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-utils libvirt-daemon-system"
         echo -e "  sudo usermod -aG kvm \$SUDO_USER && newgrp kvm"
@@ -66,9 +66,9 @@ if [ "$KVM_READY" = false ] || [ "$QEMU_READY" = false ]; then
         echo -e "  sudo pacman -S qemu-full"
         echo -e "  sudo usermod -aG kvm \$SUDO_USER && newgrp kvm"
     else
-        echo -e "  사용 중인 패키지 관리자에서 qemu-kvm 및 qemu-img를 설치하고 /dev/kvm 권한을 부여하세요."
+        echo -e "  Install qemu-kvm and qemu-img from your package manager and grant access to /dev/kvm."
     fi
-    echo -e "\n설치 완료 후 본 설치 스크립트(sudo ./install.sh)를 다시 실행해 주세요."
+    echo -e "\nAfter installation, re-run this script (sudo ./install.sh)."
     echo -e "${RED}================================================================${NC}"
     exit 1
 fi

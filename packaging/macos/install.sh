@@ -40,12 +40,12 @@ fi
 
 if [ "$QEMU_INSTALLED" = false ]; then
     echo -e "\n${RED}================================================================${NC}"
-    echo -e "${RED}[ERROR] 필수 하이퍼바이저 엔진(QEMU)이 감지되지 않았습니다.${NC}"
-    echo -e "ec2pass는 macOS에서 커널 HVF 가속을 연동하기 위해 QEMU가 필수입니다."
-    echo -e "\n${YELLOW}▶ 해결 방법:${NC}"
-    echo -e "  터미널에서 Homebrew를 통해 QEMU를 설치해 주세요:"
+    echo -e "${RED}[ERROR] Required hypervisor engine (QEMU) was not found.${NC}"
+    echo -e "ec2pass requires QEMU on macOS to utilize kernel HVF acceleration."
+    echo -e "\n${YELLOW}▶ Resolution:${NC}"
+    echo -e "  Please install QEMU via Homebrew:"
     echo -e "  ${GREEN}brew install qemu${NC}"
-    echo -e "\n설치 완료 후 본 설치 스크립트(sudo ./install.sh)를 다시 실행해 주세요."
+    echo -e "\nAfter installation, re-run this script (sudo ./install.sh)."
     echo -e "${RED}================================================================${NC}"
     exit 1
 fi

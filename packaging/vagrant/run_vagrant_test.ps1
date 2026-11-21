@@ -45,13 +45,13 @@ if ($Provider) {
     Write-Host "Target Provider: Hyper-V (Windows Native)" -ForegroundColor Green
     
     if (-not $isAdmin) {
-        Write-Warning "Hyper-V 가상화 관리는 Windows 관리자 권한(Administrator)이 필수입니다."
-        Write-Host "`n[해결 방법 1 - Hyper-V 사용 시 (권장)]" -ForegroundColor Yellow
-        Write-Host "  시작 메뉴에서 'PowerShell'을 우클릭하여 '관리자 권한으로 실행'한 뒤 다음 명령을 실행하십시오:" -ForegroundColor White
-        Write-Host "    cd c:\ec2_multipath" -ForegroundColor Cyan
+        Write-Warning "Hyper-V virtualization management requires Windows Administrator privileges."
+        Write-Host "`n[Resolution Option 1 - Using Hyper-V (Recommended)]" -ForegroundColor Yellow
+        Write-Host "  Right-click 'PowerShell' in the Start Menu, select 'Run as Administrator', then run:" -ForegroundColor White
+        Write-Host "    cd c:\ec2pass" -ForegroundColor Cyan
         Write-Host "    powershell -ExecutionPolicy Bypass -File packaging\vagrant\run_vagrant_test.ps1" -ForegroundColor Cyan
-        Write-Host "`n[해결 방법 2 - 일반 사용자 권한 터미널 사용 시]" -ForegroundColor Yellow
-        Write-Host "  VirtualBox를 설치하시면 일반 터미널에서도 바로 동작합니다:" -ForegroundColor White
+        Write-Host "`n[Resolution Option 2 - Running as standard user]" -ForegroundColor Yellow
+        Write-Host "  Install VirtualBox to run from a standard user terminal:" -ForegroundColor White
         Write-Host "    winget install Oracle.VirtualBox" -ForegroundColor White
         exit 1
     }

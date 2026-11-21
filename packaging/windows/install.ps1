@@ -1,4 +1,4 @@
-# PowerShell Installer for InhausLab ec2pass on Windows
+﻿# PowerShell Installer for InhausLab ec2pass on Windows
 # Enforces Hyper-V / WHPX hardware acceleration as a mandatory prerequisite.
 param (
     [string]$InstallDir = "",
@@ -61,19 +61,19 @@ if (-not $hypervReady) {
 
 if (-not $hypervReady -and -not $SkipHypervCheck) {
     Write-Host "`n================================================================" -ForegroundColor Red
-    Write-Host " [ERROR] 필수 하이퍼바이저(Hyper-V 또는 WHPX)가 활성화되지 않았습니다." -ForegroundColor Red
-    Write-Host " ec2pass는 시뮬레이션 없이 실제 하드웨어 가상화를 필수로 요구합니다." -ForegroundColor Red
-    Write-Host "`n ▶ 해결 방법 (관리자 권한 PowerShell에서 아래 명령을 실행하세요):" -ForegroundColor Yellow
-    Write-Host "   1. Hyper-V 활성화 (Windows Pro / Enterprise):" -ForegroundColor White
+    Write-Host " [ERROR] Required hypervisor (Hyper-V or WHPX) is not enabled." -ForegroundColor Red
+    Write-Host " ec2pass strictly requires hardware virtualization without simulation." -ForegroundColor Red
+    Write-Host "`n ▶ Resolution (Run in an elevated Administrator PowerShell):" -ForegroundColor Yellow
+    Write-Host "   1. Enable Hyper-V (Windows Pro / Enterprise):" -ForegroundColor White
     Write-Host "      Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All" -ForegroundColor Cyan
-    Write-Host "   2. Windows Hypervisor Platform 활성화 (Windows Home 등):" -ForegroundColor White
+    Write-Host "   2. Enable Windows Hypervisor Platform (Windows Home, etc.):" -ForegroundColor White
     Write-Host "      Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All" -ForegroundColor Cyan
-    Write-Host "   3. QEMU 설치:" -ForegroundColor White
+    Write-Host "   3. Install QEMU:" -ForegroundColor White
     Write-Host "      winget install SoftwareFreedomConservancy.QEMU" -ForegroundColor Cyan
-    Write-Host "`n 설정 및 시스템 재부팅 후 설치 프로그램을 다시 실행해 주세요." -ForegroundColor Yellow
+    Write-Host "`n After configuration, reboot the system and re-run this installer." -ForegroundColor Yellow
     Write-Host "================================================================" -ForegroundColor Red
     if (-not $Silent) {
-        Read-Host "엔터(Enter) 키를 누르면 설치를 종료합니다..."
+        Read-Host "Press Enter to exit installer..."
     }
     exit 1
 }
@@ -87,9 +87,12 @@ $candidates = @(
     (Join-Path $scriptDir "..\..\target\release"),
     (Join-Path $scriptDir "target\release"),
     (Join-Path (Get-Location) "target\release"),
-    (Join-Path (Get-Location) "dist\ec2pass-v1.0.0-windows-x86_64"),
     (Join-Path (Get-Location) "target\debug")
 )
+$distDirs = Get-ChildItem -Path (Join-Path (Get-Location) "dist\ec2pass-*") -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+if ($distDirs) {
+    $candidates += $distDirs
+}
 
 $binSource = ""
 foreach ($cand in $candidates) {
