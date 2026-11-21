@@ -1,60 +1,87 @@
-# InhausLab ec2pass (`ec2pass` / `multipass`)
-## 멀티 플랫폼 빌드, 테스트 및 배포 가이드 (`BUILD_AND_RELEASE.md`)
+# Build and Release Guide
 
-본 문서는 **Windows (.exe)**, **macOS (.tar.gz)**, **Linux (.tar.gz)** 환경에서 `ec2pass` 및 `multipass`를 빌드하고 배포 패키지를 생성하는 표준 규격서입니다.
-
----
-
-## 1. 사전 요구사항 (Prerequisites)
-
-### A. 공통 요구사항
-* **Rust Toolchain**: 1.75 이상 (`rustc`, `cargo`)
-* **Git**
-
-### B. 필수 하이퍼바이저 (시뮬레이션 모드 금지)
-* **Linux**: KVM (`/dev/kvm`), `qemu-kvm`, `qemu-img`
-* **macOS**: `Hypervisor.framework (HVF)` 지원 CPU, `qemu` (`brew install qemu`)
-* **Windows**: `Hyper-V` 또는 `HypervisorPlatform (WHPX)` 또는 `QEMU`
+This document describes the compilation prerequisites, build procedures, and release packaging workflows for **InhausLab ec2pass** (`ec2pass` / `multipass`) across Windows, macOS, and Linux.
 
 ---
 
-## 2. 컴파일 및 테스트
+## 1. Prerequisites
 
-### A. 컴파일
+### Rust Toolchain
+- **Rust**: 1.75.0 or later (Stable edition 2021).
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  ```
+
+### Virtualization & Hypervisor Requirements
+*InhausLab ec2pass requires genuine hardware virtualization acceleration. Mock/simulated virtualization is strictly prohibited.*
+- **Linux**: QEMU (`qemu-system-x86_64` / `qemu-img`) with KVM enabled (`/dev/kvm`).
+- **macOS**: QEMU (`qemu-system-x86_64` or `qemu-system-aarch64`) with Hypervisor.framework (`HVF`) support.
+  ```bash
+  brew install qemu
+  ```
+- **Windows**: QEMU with WHPX enabled, or native Windows Hyper-V.
+
+---
+
+## 2. Compiling the Binaries
+
+Build all workspace crates in release mode:
+
 ```bash
 cargo build --workspace --release
 ```
-생성되는 바이너리:
-* `ec2pass` (또는 `ec2pass.exe`) - CLI 도구
-* `multipass` (또는 `multipass.exe`) - Multipass 호환 별칭
-* `ec2passd` (또는 `ec2passd.exe`) - 오케스트레이터 데몬
 
-### B. 단위 테스트
+This generates the following binaries in `target/release/`:
+- `ec2pass` (CLI client)
+- `ec2passd` (Daemon server)
+
+Create the drop-in `multipass` compatibility alias:
+```bash
+# On Unix (macOS / Linux):
+ln -sf ec2pass target/release/multipass
+
+# On Windows (PowerShell):
+Copy-Item target\release\ec2pass.exe target\release\multipass.exe
+```
+
+---
+
+## 3. Running Tests
+
+Run the Rust workspace test suite:
 ```bash
 cargo test --workspace
 ```
 
+Run the end-to-end (E2E) integration test suite (requires local hypervisor):
+```bash
+./tests/e2e_test.sh
+```
+
 ---
 
-## 3. 멀티 플랫폼 패키징 (Packaging for Distribution)
+## 4. Packaging Release Artifacts
 
-### A. Windows 배포 산출물: `ec2pass-setup.exe` (.exe)
+The repository includes automated packaging scripts in `packaging/`:
+
+### macOS Universal 2 Binary Package
+Builds both `x86_64-apple-darwin` and `aarch64-apple-darwin` targets and bundles them using `lipo`:
+```bash
+./packaging/build_release.sh
+```
+This generates:
+- `dist/ec2pass-macos-universal.tar.gz` containing `ec2pass`, `ec2passd`, `multipass`, and `packaging/macos/install.sh`.
+
+### Linux Release Package
+On a Linux host (or inside the Vagrant AL2023 environment):
+```bash
+bash packaging/linux/package.sh
+```
+This generates `dist/ec2pass-linux-x86_64.tar.gz`.
+
+### Windows Release Package
+On a Windows host (PowerShell):
 ```powershell
-.\packaging\build_windows_installer.ps1
+powershell -ExecutionPolicy Bypass -File packaging\windows\package.ps1
 ```
-* 산출물: `dist\ec2pass-setup.exe`
-* 독립 실행형 설치 마법사로, Hyper-V 상태를 자동 검사하고 사용자 환경변수 `PATH`를 등록합니다.
-
-### B. macOS 배포 산출물: `ec2pass-v1.0.0-darwin-<arch>.tar.gz` (.tar.gz)
-```bash
-./packaging/build_release.sh
-```
-* 산출물: `dist/ec2pass-v1.0.0-darwin-<arch>.tar.gz`
-* 포함 내용: 바이너리 3종, `install.sh` (HVF 사전점검 포함), Launchd 데몬 plist
-
-### C. Linux 배포 산출물: `ec2pass-v1.0.0-linux-<arch>.tar.gz` (.tar.gz)
-```bash
-./packaging/build_release.sh
-```
-* 산출물: `dist/ec2pass-v1.0.0-linux-<arch>.tar.gz`
-* 포함 내용: 바이너리 3종, `install.sh` (KVM 사전점검 포함), Systemd 서비스 유닛
+This generates `ec2pass-setup.exe` and `dist\ec2pass-windows-x86_64.zip`.

@@ -49,7 +49,7 @@ elif [ "$OS" = "darwin" ]; then
     cp packaging/macos/uninstall.sh "$STAGE_DIR/"
 fi
 
-cp README.md MANUAL.md BUILD_AND_RELEASE.md "$STAGE_DIR/"
+cp README.md MANUAL.md BUILD_AND_RELEASE.md platform.md USERDATA.md "$STAGE_DIR/"
 chmod 755 "$STAGE_DIR/install.sh" "$STAGE_DIR/uninstall.sh"
 
 # 4. Create .tar.gz Archive & SHA-256 Checksum

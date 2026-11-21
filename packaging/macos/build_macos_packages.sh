@@ -58,7 +58,7 @@ package_target() {
     cp packaging/macos/com.inhauslab.ec2passd.plist "$STAGE/"
     cp packaging/macos/install.sh "$STAGE/"
     cp packaging/macos/uninstall.sh "$STAGE/"
-    cp README.md MANUAL.md BUILD_AND_RELEASE.md platform.md "$STAGE/"
+    cp README.md MANUAL.md BUILD_AND_RELEASE.md platform.md USERDATA.md "$STAGE/"
 
     chmod 755 "$STAGE/install.sh" "$STAGE/uninstall.sh" "$STAGE/ec2pass" "$STAGE/ec2passd" "$STAGE/multipass"
 
