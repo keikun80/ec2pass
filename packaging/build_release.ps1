@@ -1,10 +1,11 @@
 # Local Release Packager for Windows (No GitHub Actions required)
-$ErrorActionPreference = "Stop"
-$ProgressPreference = "SilentlyContinue"
-
 param (
     [string]$version = "1.0.0"
 )
+
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+
 $version = $version.TrimStart('v')
 $os = "windows"
 $arch = "x86_64"
@@ -31,10 +32,9 @@ Copy-Item packaging\windows\install.ps1 "$distDir\"
 Copy-Item packaging\windows\Setup.bat "$distDir\"
 Copy-Item packaging\windows\uninstall.ps1 "$distDir\"
 Copy-Item packaging\windows\Uninstall.bat "$distDir\"
-Copy-Item README.md, MANUAL.md "$distDir\"
+Copy-Item README.md, MANUAL.md, BUILD_AND_RELEASE.md, platform.md, USERDATA.md -Destination "$distDir\"
 
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory((Resolve-Path $distDir).Path, (Resolve-Path "dist").Path + "\ec2pass-v$version-$os-$arch.zip", [System.IO.Compression.CompressionLevel]::Optimal, $false)
+Compress-Archive -Path "$distDir" -DestinationPath "$archiveName" -Force
 
 # 4. Generate SHA-256 Checksum
 $hash = (Get-FileHash -Path $archiveName -Algorithm SHA256).Hash.ToLower()
