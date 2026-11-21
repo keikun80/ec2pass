@@ -1,0 +1,21 @@
+[package]
+name = "mp-daemon"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "ec2passd"
+path = "src/main.rs"
+
+[dependencies]
+mp-protocol = { path = "../mp-protocol" }
+mp-core = { path = "../mp-core" }
+mp-iso9660 = { path = "../mp-iso9660" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

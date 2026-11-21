@@ -1,0 +1,18 @@
+[Unit]
+Description=Amazon Linux 2023 Multipass Virtual Machine Daemon (mpd)
+Documentation=https://github.com/amazonlinux/amazon-linux-2023
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mpd --address 127.0.0.1:50051
+Restart=always
+RestartSec=5
+User=root
+Group=kvm
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.inhauslab.ec2passd</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/ec2passd</string>
+        <string>--address</string>
+        <string>127.0.0.1:50051</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/ec2passd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/ec2passd.err.log</string>
+</dict>
+</plist>

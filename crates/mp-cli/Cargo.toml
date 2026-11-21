@@ -1,0 +1,25 @@
+[package]
+name = "mp-cli"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "mp_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ec2pass"
+path = "src/bin/ec2pass.rs"
+
+[[bin]]
+name = "multipass"
+path = "src/bin/multipass.rs"
+
+[dependencies]
+mp-protocol = { path = "../mp-protocol" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+anyhow.workspace = true
+clap.workspace = true

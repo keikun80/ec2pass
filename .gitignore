@@ -1,0 +1,59 @@
+# ==============================================================================
+# Amazon Linux 2023 Multipass (mp) Git Ignore
+# ==============================================================================
+
+# Rust compiler and Cargo build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Local release distribution packages and checksums
+/dist/
+*.zip
+*.zip.sha256
+*.tar.gz
+*.tar.gz.sha256
+*.exe.sha256
+*-setup.exe
+
+# Runtime VM storage, instances, SSH keys, caches and state
+/data/
+/.data/
+/.mp-data/
+/data-*/
+*.qcow2
+*.iso
+*.img
+*.raw
+*.vhd
+*.vhdx
+
+# Generated packaging temporary files
+packaging/windows/*_generated.sed
+
+# Logs, trace and temporary files
+*.log
+*.tmp
+*.temp
+
+# Operating System specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE, editor and tool configurations
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# Vagrant local machine state
+.vagrant/
