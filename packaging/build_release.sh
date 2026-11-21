@@ -1,48 +1,66 @@
 #!/usr/bin/env bash
-# Local Release Packager for Linux and macOS (No GitHub Actions required)
+# Multi-Platform Release Packager for Linux and macOS (.tar.gz)
+# Builds production binaries, runs validation, and packages archives.
 set -euo pipefail
 
-VERSION="1.14.0"
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+VERSION="1.0.0"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
-echo "=== Building ec2pass release for ${OS}-${ARCH} ==="
+echo -e "${BLUE}================================================================${NC}"
+echo -e "${BLUE}  InhausLab ec2pass Packaging - ${OS} (${ARCH})                 ${NC}"
+echo -e "${BLUE}  Output Format: .tar.gz archive with installer & daemon        ${NC}"
+echo -e "${BLUE}================================================================${NC}"
 
-# 1. Compile release binaries
+# 1. Compile Release Binaries
+echo -e "\n${CYAN}[1/4] Compiling release binaries via cargo build --workspace --release...${NC}"
 cargo build --workspace --release
 
-# 2. Run test verification
-./tests/e2e_test.sh
+# 2. Run Workspace Tests
+echo -e "\n${CYAN}[2/4] Running test validation suite...${NC}"
+cargo test --workspace
 
-# 3. Create dist archive
-DIST_DIR="dist/ec2pass-v${VERSION}-${OS}-${ARCH}"
-ARCHIVE_NAME="dist/ec2pass-v${VERSION}-${OS}-${ARCH}.tar.gz"
+# 3. Create Distribution Staging Directory
+echo -e "\n${CYAN}[3/4] Staging release artifacts...${NC}"
+PACKAGE_NAME="ec2pass-v${VERSION}-${OS}-${ARCH}"
+DIST_ROOT="dist"
+STAGE_DIR="${DIST_ROOT}/${PACKAGE_NAME}"
+ARCHIVE_PATH="${DIST_ROOT}/${PACKAGE_NAME}.tar.gz"
 
-rm -rf "$DIST_DIR" "$ARCHIVE_NAME"
-mkdir -p "$DIST_DIR"
+mkdir -p "$STAGE_DIR"
 
-cp target/release/ec2pass "$DIST_DIR/"
-cp target/release/ec2passd "$DIST_DIR/"
-cp target/release/multipass "$DIST_DIR/"
+cp target/release/ec2pass "$STAGE_DIR/"
+cp target/release/ec2passd "$STAGE_DIR/"
+cp target/release/multipass "$STAGE_DIR/"
 
 if [ "$OS" = "linux" ]; then
-    cp packaging/linux/ec2passd.service "$DIST_DIR/"
-    cp packaging/linux/install.sh "$DIST_DIR/"
+    cp packaging/linux/ec2passd.service "$STAGE_DIR/"
+    cp packaging/linux/install.sh "$STAGE_DIR/"
+    cp packaging/linux/uninstall.sh "$STAGE_DIR/"
 elif [ "$OS" = "darwin" ]; then
-    cp packaging/macos/com.amazonlinux.ec2passd.plist "$DIST_DIR/"
-    cp packaging/macos/install.sh "$DIST_DIR/"
+    cp packaging/macos/com.inhauslab.ec2passd.plist "$STAGE_DIR/"
+    cp packaging/macos/install.sh "$STAGE_DIR/"
+    cp packaging/macos/uninstall.sh "$STAGE_DIR/"
 fi
 
-cp README.md MANUAL.md "$DIST_DIR/"
+cp README.md MANUAL.md BUILD_AND_RELEASE.md "$STAGE_DIR/"
+chmod 755 "$STAGE_DIR/install.sh" "$STAGE_DIR/uninstall.sh"
 
-tar -czvf "$ARCHIVE_NAME" -C "dist" "ec2pass-v${VERSION}-${OS}-${ARCH}"
+# 4. Create .tar.gz Archive & SHA-256 Checksum
+echo -e "\n${CYAN}[4/4] Creating ${ARCHIVE_PATH}...${NC}"
+tar -czvf "$ARCHIVE_PATH" -C "$DIST_ROOT" "$PACKAGE_NAME"
 
-# 4. Generate SHA-256 Checksum
 if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$ARCHIVE_NAME" > "${ARCHIVE_NAME}.sha256"
+    sha256sum "$ARCHIVE_PATH" > "${ARCHIVE_PATH}.sha256"
 else
-    shasum -a 256 "$ARCHIVE_NAME" > "${ARCHIVE_NAME}.sha256"
+    shasum -a 256 "$ARCHIVE_PATH" > "${ARCHIVE_PATH}.sha256"
 fi
 
-echo "Created release package: ${ARCHIVE_NAME}"
-echo "Checksum: $(cat "${ARCHIVE_NAME}.sha256")"
+echo -e "\n${GREEN}Successfully created release package:${NC} ${ARCHIVE_PATH}"
+echo -e "${GREEN}SHA-256 Checksum:${NC} $(cat "${ARCHIVE_PATH}.sha256")"

@@ -10,7 +10,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use mp_protocol::{
+use ec2ps_protocol::{
     format_catalog_find, format_instance_info, format_instance_list, parse_byte_size,
     render_ascii_table, OutputFormat, RpcRequest, RpcResponse, RpcStreamFrame, DEFAULT_DAEMON_ADDR,
 };
@@ -459,6 +459,9 @@ async fn run_cli() -> Result<()> {
             mounts,
             timeout,
         } => {
+            // Hypervisor prerequisite check: fail immediately with actionable guide if missing
+            ec2ps_core::hypervisor::check_hypervisor_prerequisites()?;
+
             let memory_bytes = parse_byte_size(&memory)?;
             let disk_bytes = parse_byte_size(&disk)?;
 
@@ -510,6 +513,7 @@ async fn run_cli() -> Result<()> {
         }
 
         Commands::Start { names, all } => {
+            ec2ps_core::hypervisor::check_hypervisor_prerequisites()?;
             send_rpc(addr, RpcRequest::Start { names, all }, true).await?;
         }
 

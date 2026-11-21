@@ -9,7 +9,7 @@
 
 use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
-use mp_protocol::ImageCatalogEntry;
+use ec2ps_protocol::ImageCatalogEntry;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};

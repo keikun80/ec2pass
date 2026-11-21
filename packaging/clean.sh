@@ -15,7 +15,7 @@ if command -v cargo >/dev/null 2>&1; then
 fi
 
 # 3. Remove build and runtime directories
-rm -rf target dist data .data .ec2pass-data .mp-data
+rm -rf target dist data .data .ec2pass-data .ec2ps-data
 
 # 4. Remove temporary packaging files and logs
 rm -f packaging/windows/*_generated.sed

@@ -1,7 +1,9 @@
 # PowerShell Installer for InhausLab ec2pass on Windows
+# Enforces Hyper-V / WHPX hardware acceleration as a mandatory prerequisite.
 param (
     [string]$InstallDir = "",
-    [switch]$Silent = $false
+    [switch]$Silent = $false,
+    [switch]$SkipHypervCheck = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,22 +23,59 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
         $InstallDir = "$env:LOCALAPPDATA\Programs\ec2pass"
     }
 }
-
 Write-Host "Target Directory: $InstallDir" -ForegroundColor Yellow
 
-# 2. Check Hyper-V & Virtualization Prerequisite
-Write-Host "`n[1/5] Checking Windows Virtualization & Hyper-V status..." -ForegroundColor Gray
+# 2. Mandatory Hypervisor Prerequisite Check
+Write-Host "`n[1/5] Checking Windows Hypervisor (Hyper-V / WHPX) status..." -ForegroundColor Gray
+$hypervReady = $false
+
 try {
     $hypervFeature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -ErrorAction SilentlyContinue
     if ($hypervFeature -and $hypervFeature.State -eq "Enabled") {
-        Write-Host "  [OK] Hyper-V optional feature is enabled." -ForegroundColor Green
-    } else {
-        Write-Host "  [NOTICE] Hyper-V is not currently enabled in Windows features." -ForegroundColor DarkYellow
-        Write-Host "           You can enable it via: Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All" -ForegroundColor DarkYellow
-        Write-Host "           ec2pass also supports QEMU and fallback simulation mode automatically." -ForegroundColor DarkYellow
+        $hypervReady = $true
+        Write-Host "  [OK] Hyper-V native virtualization feature is active." -ForegroundColor Green
     }
 } catch {
-    Write-Host "  [INFO] Skipped Hyper-V feature query (non-elevated check)." -ForegroundColor DarkGray
+    # Non-elevated check or feature lookup fallback
+}
+
+if (-not $hypervReady) {
+    # Check WHPX
+    try {
+        $whpxFeature = Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -ErrorAction SilentlyContinue
+        if ($whpxFeature -and $whpxFeature.State -eq "Enabled") {
+            $hypervReady = $true
+            Write-Host "  [OK] Windows Hypervisor Platform (WHPX) is active." -ForegroundColor Green
+        }
+    } catch {}
+}
+
+if (-not $hypervReady) {
+    # Check QEMU binary in PATH
+    $qemuCmd = Get-Command qemu-system-x86_64.exe -ErrorAction SilentlyContinue
+    if ($qemuCmd) {
+        $hypervReady = $true
+        Write-Host "  [OK] QEMU virtualization binary detected in PATH." -ForegroundColor Green
+    }
+}
+
+if (-not $hypervReady -and -not $SkipHypervCheck) {
+    Write-Host "`n================================================================" -ForegroundColor Red
+    Write-Host " [ERROR] 필수 하이퍼바이저(Hyper-V 또는 WHPX)가 활성화되지 않았습니다." -ForegroundColor Red
+    Write-Host " ec2pass는 시뮬레이션 없이 실제 하드웨어 가상화를 필수로 요구합니다." -ForegroundColor Red
+    Write-Host "`n ▶ 해결 방법 (관리자 권한 PowerShell에서 아래 명령을 실행하세요):" -ForegroundColor Yellow
+    Write-Host "   1. Hyper-V 활성화 (Windows Pro / Enterprise):" -ForegroundColor White
+    Write-Host "      Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All" -ForegroundColor Cyan
+    Write-Host "   2. Windows Hypervisor Platform 활성화 (Windows Home 등):" -ForegroundColor White
+    Write-Host "      Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All" -ForegroundColor Cyan
+    Write-Host "   3. QEMU 설치:" -ForegroundColor White
+    Write-Host "      winget install SoftwareFreedomConservancy.QEMU" -ForegroundColor Cyan
+    Write-Host "`n 설정 및 시스템 재부팅 후 설치 프로그램을 다시 실행해 주세요." -ForegroundColor Yellow
+    Write-Host "================================================================" -ForegroundColor Red
+    if (-not $Silent) {
+        Read-Host "엔터(Enter) 키를 누르면 설치를 종료합니다..."
+    }
+    exit 1
 }
 
 # 3. Locate Source Binaries
@@ -48,7 +87,7 @@ $candidates = @(
     (Join-Path $scriptDir "..\..\target\release"),
     (Join-Path $scriptDir "target\release"),
     (Join-Path (Get-Location) "target\release"),
-    (Join-Path (Get-Location) "dist\ec2pass-v1.14.0-windows-x86_64"),
+    (Join-Path (Get-Location) "dist\ec2pass-v1.0.0-windows-x86_64"),
     (Join-Path (Get-Location) "target\debug")
 )
 
@@ -100,94 +139,18 @@ foreach ($f in $auxFiles) {
     }
 }
 
-# 5. Configure Environment PATH
-Write-Host "`n[4/5] Configuring environment variables..." -ForegroundColor Gray
-$configured = $false
-if ($isAdmin) {
-    try {
-        $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-        $entries = $machinePath -split ';' | Where-Object { $_ -ne "" }
-        if ($entries -notcontains $InstallDir) {
-            [Environment]::SetEnvironmentVariable("Path", "$machinePath;$InstallDir", "Machine")
-            Write-Host "  Added '$InstallDir' to Machine PATH." -ForegroundColor Green
-        }
-        $configured = $true
-    } catch {
-        Write-Host "  [INFO] Machine PATH access restricted; falling back to User PATH." -ForegroundColor DarkGray
-    }
+# 5. Configure User/System PATH Environment Variable
+Write-Host "`n[4/5] Configuring environment PATH..." -ForegroundColor Gray
+$currentPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+if ($currentPath -split ";" -notcontains $InstallDir) {
+    [Environment]::SetEnvironmentVariable("Path", "$currentPath;$InstallDir", [EnvironmentVariableTarget]::User)
+    Write-Host "  Added $InstallDir to User PATH." -ForegroundColor Green
 }
 
-if (-not $configured) {
-    try {
-        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        $entries = $userPath -split ';' | Where-Object { $_ -ne "" }
-        if ($entries -notcontains $InstallDir) {
-            [Environment]::SetEnvironmentVariable("Path", "$userPath;$InstallDir", "User")
-            Write-Host "  Added '$InstallDir' to User PATH." -ForegroundColor Green
-        } else {
-            Write-Host "  '$InstallDir' is already present in User PATH." -ForegroundColor DarkGray
-        }
-    } catch {
-        Write-Warning "Could not update User PATH automatically: $_"
-    }
-}
-$env:Path = "$env:Path;$InstallDir"
-
-# 6. Register Windows Start Menu Shortcut and Add/Remove Programs Registry
-Write-Host "`n[5/5] Registering Windows Start Menu and Add/Remove Programs..." -ForegroundColor Gray
-try {
-    $startMenuPrograms = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
-    if ([string]::IsNullOrWhiteSpace($startMenuPrograms)) {
-        $startMenuPrograms = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
-    }
-    if (Test-Path $startMenuPrograms) {
-        $shortcutPath = Join-Path $startMenuPrograms "InhausLab ec2pass.lnk"
-        $wshShell = New-Object -ComObject WScript.Shell
-        $shortcut = $wshShell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = "powershell.exe"
-        $shortcut.Arguments = "-NoExit -Command `"Write-Host 'Welcome to InhausLab ec2pass!' -ForegroundColor Cyan; ec2pass --version; ec2pass find`""
-        $shortcut.WorkingDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
-        $shortcut.Description = "Launch InhausLab ec2pass CLI"
-        $shortcut.Save()
-        Write-Host "  Created Start Menu shortcut: $shortcutPath" -ForegroundColor Green
-    }
-} catch {
-    Write-Host "  [INFO] Skipped Start Menu shortcut creation: $_" -ForegroundColor DarkGray
-}
-
-# Registry entry for Installed Apps
-try {
-    $regKeyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ec2pass"
-    if ($isAdmin) {
-        try {
-            $regKeyPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ec2pass"
-            if (-not (Test-Path $regKeyPath)) { New-Item -Path $regKeyPath -Force | Out-Null }
-        } catch {
-            $regKeyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ec2pass"
-        }
-    }
-    
-    if (-not (Test-Path $regKeyPath)) {
-        New-Item -Path $regKeyPath -Force | Out-Null
-    }
-    Set-ItemProperty -Path $regKeyPath -Name "DisplayName" -Value "InhausLab ec2pass (Amazon Linux 2023 VM Orchestrator)"
-    Set-ItemProperty -Path $regKeyPath -Name "DisplayVersion" -Value "1.0.0"
-    Set-ItemProperty -Path $regKeyPath -Name "Publisher" -Value "InhausLab"
-    Set-ItemProperty -Path $regKeyPath -Name "InstallLocation" -Value $InstallDir
-    Set-ItemProperty -Path $regKeyPath -Name "UninstallString" -Value "powershell.exe -ExecutionPolicy Bypass -File `"$InstallDir\uninstall.ps1`""
-    Set-ItemProperty -Path $regKeyPath -Name "QuietUninstallString" -Value "powershell.exe -ExecutionPolicy Bypass -File `"$InstallDir\uninstall.ps1`" -Silent"
-    Write-Host "  Registered in Windows Installed Apps." -ForegroundColor Green
-} catch {
-    Write-Host "  [INFO] Skipped registry registration: $_" -ForegroundColor DarkGray
-}
-
-Write-Host "`n================================================================" -ForegroundColor Cyan
-Write-Host "  Installation Completed Successfully!" -ForegroundColor Green
-Write-Host "================================================================" -ForegroundColor Cyan
-Write-Host "Binaries located at: $InstallDir" -ForegroundColor White
-Write-Host "Commands available: ec2pass, multipass, ec2passd" -ForegroundColor Yellow
-Write-Host "Try running in a new terminal:" -ForegroundColor White
-Write-Host "  ec2pass --version" -ForegroundColor Cyan
-Write-Host "  ec2pass find" -ForegroundColor Cyan
-Write-Host "  ec2pass launch al2023 --name test-vm" -ForegroundColor Cyan
-Write-Host "  ec2pass shell test-vm" -ForegroundColor Cyan
+# 6. Verify Installation
+Write-Host "`n[5/5] Installation verification..." -ForegroundColor Gray
+Write-Host "InhausLab ec2pass installation complete!" -ForegroundColor Green
+Write-Host "Commands available in new terminal sessions:"
+Write-Host "  ec2pass version"
+Write-Host "  ec2pass find"
+Write-Host "  ec2pass launch al2023 -n my-win-vm"

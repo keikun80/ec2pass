@@ -13,7 +13,7 @@ if (Get-Command cargo -ErrorAction SilentlyContinue) {
 }
 
 # 3. Remove target, dist, and data directories
-$dirsToRemove = @("target", "dist", "data", ".ec2pass-data", ".mp-data", ".data")
+$dirsToRemove = @("target", "dist", "data", ".ec2pass-data", ".ec2ps-data", ".data")
 foreach ($d in $dirsToRemove) {
     if (Test-Path $d) {
         Remove-Item -Path $d -Recurse -Force -ErrorAction SilentlyContinue
@@ -24,7 +24,7 @@ foreach ($d in $dirsToRemove) {
 # 4. Remove temporary generated files
 $filesToRemove = @(
     "packaging\windows\ec2pass_generated.sed",
-    "packaging\windows\mp_generated.sed",
+    "packaging\windows\ec2ps_generated.sed",
     "packaging\windows\alpass_generated.sed"
 )
 foreach ($f in $filesToRemove) {

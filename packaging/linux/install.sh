@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# Universal Installer Script for InhausLab ec2pass (multipass compatible) on Linux
+# Universal Installer Script for InhausLab ec2pass on Linux
+# Enforces Linux KVM hardware acceleration as a mandatory prerequisite.
 set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
-echo -e "${BLUE}=== InhausLab ec2pass Linux Installer ===${NC}"
+echo -e "${BLUE}================================================================${NC}"
+echo -e "${BLUE}       InhausLab ec2pass Linux System Installer                 ${NC}"
+echo -e "${BLUE}================================================================${NC}"
 
 # 1. Check Root Privileges
 if [ "$EUID" -ne 0 ]; then
@@ -27,14 +32,50 @@ case "$ARCH" in
 esac
 echo -e "Detected Architecture: ${GREEN}${TARGET_ARCH}${NC}"
 
-# 3. Check KVM Hypervisor Support
+# 3. Mandatory Hypervisor (KVM) Pre-flight Check
+echo -e "\n${CYAN}[1/4] Checking Linux KVM Hypervisor prerequisites...${NC}"
+KVM_READY=true
+
 if [ ! -e /dev/kvm ]; then
-    echo -e "${RED}Warning: /dev/kvm not found. Hardware acceleration (KVM) may be disabled in BIOS/UEFI.${NC}"
+    echo -e "${RED}[X] Hardware acceleration device /dev/kvm was not found.${NC}"
+    KVM_READY=false
 else
-    echo -e "${GREEN}KVM Hardware Acceleration: Available (/dev/kvm)${NC}"
+    echo -e "  ${GREEN}✓ /dev/kvm device node is active.${NC}"
 fi
 
+QEMU_READY=false
+if command -v qemu-system-x86_64 >/dev/null 2>&1 || command -v qemu-system-aarch64 >/dev/null 2>&1 || command -v qemu-kvm >/dev/null 2>&1; then
+    QEMU_READY=true
+    echo -e "  ${GREEN}✓ QEMU virtualization binary is installed.${NC}"
+else
+    echo -e "${RED}[X] QEMU system emulator binary was not found.${NC}"
+fi
+
+if [ "$KVM_READY" = false ] || [ "$QEMU_READY" = false ]; then
+    echo -e "\n${RED}================================================================${NC}"
+    echo -e "${RED}[ERROR] 필수 하이퍼바이저(KVM) 요구사항이 충족되지 않았습니다.${NC}"
+    echo -e "ec2pass는 시뮬레이션 없이 실제 하드웨어 가상화를 필수로 요구합니다."
+    echo -e "\n${YELLOW}▶ 해결 방법 (아래 명령어를 실행하여 KVM 및 QEMU를 설치하세요):${NC}"
+    if command -v apt-get >/dev/null 2>&1; then
+        echo -e "  sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-utils libvirt-daemon-system"
+        echo -e "  sudo usermod -aG kvm \$SUDO_USER && newgrp kvm"
+    elif command -v dnf >/dev/null 2>&1; then
+        echo -e "  sudo dnf install -y qemu-kvm qemu-img"
+        echo -e "  sudo usermod -aG kvm \$SUDO_USER && newgrp kvm"
+    elif command -v pacman >/dev/null 2>&1; then
+        echo -e "  sudo pacman -S qemu-full"
+        echo -e "  sudo usermod -aG kvm \$SUDO_USER && newgrp kvm"
+    else
+        echo -e "  사용 중인 패키지 관리자에서 qemu-kvm 및 qemu-img를 설치하고 /dev/kvm 권한을 부여하세요."
+    fi
+    echo -e "\n설치 완료 후 본 설치 스크립트(sudo ./install.sh)를 다시 실행해 주세요."
+    echo -e "${RED}================================================================${NC}"
+    exit 1
+fi
+echo -e "${GREEN}Hypervisor status: OK (KVM acceleration ready)${NC}"
+
 # 4. Install Binaries
+echo -e "\n${CYAN}[2/4] Installing binaries to /usr/local/bin...${NC}"
 INSTALL_DIR="/usr/local/bin"
 mkdir -p "$INSTALL_DIR"
 
@@ -56,9 +97,10 @@ else
 fi
 
 chmod 755 "$INSTALL_DIR/ec2pass" "$INSTALL_DIR/ec2passd" "$INSTALL_DIR/multipass"
-echo -e "${GREEN}Installed binaries to $INSTALL_DIR (ec2pass, multipass, ec2passd)${NC}"
+echo -e "  ${GREEN}✓ Installed ec2pass, multipass, ec2passd to $INSTALL_DIR${NC}"
 
 # 5. Install and Start Systemd Service
+echo -e "\n${CYAN}[3/4] Configuring ec2passd systemd background service...${NC}"
 if command -v systemctl >/dev/null 2>&1; then
     SERVICE_FILE="/etc/systemd/system/ec2passd.service"
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -84,10 +126,13 @@ EOF
 
     systemctl daemon-reload
     systemctl enable --now ec2passd.service
-    echo -e "${GREEN}Systemd service 'ec2passd.service' enabled and started.${NC}"
+    echo -e "  ${GREEN}✓ Systemd service 'ec2passd.service' registered and running.${NC}"
 fi
 
-echo -e "\n${GREEN}Installation complete! Try running:${NC}"
+# 6. Verify Installation
+echo -e "\n${CYAN}[4/4] Verifying installation...${NC}"
+echo -e "${GREEN}Installation successfully completed!${NC}"
+echo -e "Available commands:"
 echo "  ec2pass version"
 echo "  ec2pass find"
-echo "  ec2pass launch al2023 -n test-vm"
+echo "  ec2pass launch al2023 -n my-vm"

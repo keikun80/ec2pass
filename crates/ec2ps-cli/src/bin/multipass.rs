@@ -1,4 +1,4 @@
 #[tokio::main]
 async fn main() {
-    mp_cli::entry_main().await;
+    ec2ps_cli::entry_main().await;
 }

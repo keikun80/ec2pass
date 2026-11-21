@@ -7,7 +7,7 @@
 //! 3. `user-data`: user-supplied `--cloud-init` YAML configuration (validated prior to boot).
 
 use anyhow::{bail, Context, Result};
-use mp_iso9660::{write_cidata_iso, IsoFile};
+use ec2ps_iso9660::{write_cidata_iso, IsoFile};
 use std::path::Path;
 
 pub struct CloudInitConfig<'a> {

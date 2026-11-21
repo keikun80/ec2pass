@@ -20,7 +20,11 @@
 * **Client-Daemon 아키텍처**:
   * 백그라운드 데몬 (`ec2passd`)과 CLI (`ec2pass` 및 `multipass`) 간 스트리밍 IPC
   * 데몬 미실행 시 CLI가 자동으로 `ec2passd` 백그라운드 프로세스를 구동
-  * QEMU/KVM/WHPX/HVF 가상화 지원 및 QEMU 미설치 환경을 위한 무중단 시뮬레이션 모드 지원
+  * Linux(KVM), macOS(HVF+QEMU), Windows(Hyper-V/WHPX) 네이티브 하이퍼바이저 필수 지원 (부재 시 맞춤형 설치 가이드 자동 안내)
+* **멀티 플랫폼 공식 배포 지원**:
+  * **Windows**: 독립 실행 설치 파일 (`ec2pass-setup.exe`)
+  * **macOS**: 유니버설 아카이브 (`ec2pass-v1.0.0-darwin-<arch>.tar.gz`)
+  * **Linux**: 독립 아카이브 (`ec2pass-v1.0.0-linux-<arch>.tar.gz`)
 
 ---
 
@@ -30,11 +34,11 @@
 c:\ec2_multipath\
 ├── Cargo.toml                  # Workspace 매니페스트
 ├── crates/
-│   ├── ec2pass-iso9660/             # 순수 Rust ISO9660 (cidata) 생성 라이브러리
-│   ├── ec2pass-protocol/            # IPC 프로토콜, 상태 DTO, Table/JSON/YAML/CSV 포맷터
-│   ├── ec2pass-core/                # ImageVault (CDN 캐시), Cloud-Init, QEMU 드라이버, SSH, State Store
-│   ├── ec2pass-daemon/              # 백그라운드 데몬 바이너리 (ec2passd)
-│   └── ec2pass-cli/                 # CLI 바이너리 (ec2pass, multipass)
+│   ├── ec2ps-iso9660/             # 순수 Rust ISO9660 (cidata) 생성 라이브러리
+│   ├── ec2ps-protocol/            # IPC 프로토콜, 상태 DTO, Table/JSON/YAML/CSV 포맷터
+│   ├── ec2ps-core/                # ImageVault (CDN 캐시), Cloud-Init, QEMU 드라이버, SSH, State Store
+│   ├── ec2ps-daemon/              # 백그라운드 데몬 바이너리 (ec2passd)
+│   └── ec2ps-cli/                 # CLI 바이너리 (ec2pass, multipass)
 └── README.md
 ```
 

@@ -3,7 +3,7 @@
 
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
-use mp_protocol::{
+use ec2ps_protocol::{
     format_bytes, parse_byte_size, CommandAlias, InstanceDetails, InstanceState, MountSpec,
     SnapshotInfo,
 };

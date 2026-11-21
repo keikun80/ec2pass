@@ -1,11 +1,11 @@
 [package]
-name = "mp-core"
+name = "ec2ps-core"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-mp-protocol = { path = "../mp-protocol" }
-mp-iso9660 = { path = "../mp-iso9660" }
+ec2ps-protocol = { path = "../ec2ps-protocol" }
+ec2ps-iso9660 = { path = "../ec2ps-iso9660" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

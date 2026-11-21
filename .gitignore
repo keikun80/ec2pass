@@ -20,6 +20,8 @@
 /data/
 /.data/
 /.mp-data/
+/.ec2ps-data/
+/.ec2pass-data/
 /data-*/
 *.qcow2
 *.iso

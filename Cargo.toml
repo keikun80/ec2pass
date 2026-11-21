@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/mp-protocol",
-    "crates/mp-iso9660",
-    "crates/mp-core",
-    "crates/mp-daemon",
-    "crates/mp-cli",
+    "crates/ec2ps-protocol",
+    "crates/ec2ps-iso9660",
+    "crates/ec2ps-core",
+    "crates/ec2ps-daemon",
+    "crates/ec2ps-cli",
 ]
 
 [workspace.package]

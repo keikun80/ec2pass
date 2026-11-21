@@ -1,10 +1,10 @@
 [package]
-name = "mp-cli"
+name = "ec2ps-cli"
 version.workspace = true
 edition.workspace = true
 
 [lib]
-name = "mp_cli"
+name = "ec2ps_cli"
 path = "src/lib.rs"
 
 [[bin]]
@@ -16,7 +16,8 @@ name = "multipass"
 path = "src/bin/multipass.rs"
 
 [dependencies]
-mp-protocol = { path = "../mp-protocol" }
+ec2ps-protocol = { path = "../ec2ps-protocol" }
+ec2ps-core = { path = "../ec2ps-core" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

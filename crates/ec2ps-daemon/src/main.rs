@@ -10,14 +10,14 @@
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::Parser;
-use mp_core::catalog::ImageVault;
-use mp_core::cloud_init::{generate_al2023_seed_iso, validate_cloud_init_yaml, CloudInitConfig};
-use mp_core:: default_data_dir;
-use mp_core::driver::VirtualMachineDriver;
-use mp_core::petname::generate_petname;
-use mp_core::ssh::{copy_dir_recursive, SshManager};
-use mp_core::state::{InstanceRecord, StateStore};
-use mp_protocol::{
+use ec2ps_core::catalog::ImageVault;
+use ec2ps_core::cloud_init::{generate_al2023_seed_iso, validate_cloud_init_yaml, CloudInitConfig};
+use ec2ps_core::default_data_dir;
+use ec2ps_core::driver::VirtualMachineDriver;
+use ec2ps_core::petname::generate_petname;
+use ec2ps_core::ssh::{copy_dir_recursive, SshManager};
+use ec2ps_core::state::{InstanceRecord, StateStore};
+use ec2ps_protocol::{
     CommandAlias, InstanceDetails, InstanceState, MountSpec, NetworkInterfaceInfo, RpcRequest,
     RpcResponse, RpcStreamFrame, DEFAULT_DAEMON_ADDR,
 };
@@ -63,8 +63,8 @@ async fn main() -> Result<()> {
     let args = DaemonArgs::parse();
     let mut data_dir = args.data_dir.unwrap_or_else(default_data_dir);
     if let Err(e) = std::fs::create_dir_all(&data_dir) {
-        tracing::warn!("Failed to create data dir at {:?}: {}. Falling back to .mp-data", data_dir, e);
-        data_dir = PathBuf::from(".mp-data");
+        tracing::warn!("Failed to create data dir at {:?}: {}. Falling back to .ec2ps-data", data_dir, e);
+        data_dir = PathBuf::from(".ec2ps-data");
         std::fs::create_dir_all(&data_dir)?;
     }
 
@@ -72,14 +72,20 @@ async fn main() -> Result<()> {
     let vault = ImageVault::new(data_dir.join("cache").join("images"))?;
     let ssh = SshManager::new(data_dir.join("ssh-keys"))?;
     let preferred_driver = store.data.settings.get("local.driver").map(|s| s.as_str());
-    let driver = mp_core::driver::create_default_driver(preferred_driver);
+    let driver = match ec2ps_core::driver::create_default_driver(preferred_driver) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{}", e);
+            tracing::error!("Mandatory hypervisor requirement not satisfied: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     tracing::info!(
-        "ec2passd (InhausLab ec2pass Daemon v{}) listening on {} [driver: {}, mock_mode: {}, data_dir: {:?}]",
+        "ec2passd (InhausLab ec2pass Daemon v{}) listening on {} [driver: {}, data_dir: {:?}]",
         env!("CARGO_PKG_VERSION"),
         args.address,
         driver.driver_name(),
-        driver.is_mock(),
         data_dir
     );
 
