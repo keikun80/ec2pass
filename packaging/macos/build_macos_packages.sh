@@ -9,7 +9,8 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-VERSION="${1:-${VERSION:-1.0.0}}"
+CARGO_VER=$(grep -m1 '^version' Cargo.toml 2>/dev/null | cut -d'"' -f2 || echo "0.1.0")
+VERSION="${1:-${VERSION:-$CARGO_VER}}"
 VERSION="${VERSION#v}"
 DIST_DIR="dist"
 mkdir -p "$DIST_DIR" target/universal

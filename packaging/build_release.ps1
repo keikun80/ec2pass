@@ -1,11 +1,20 @@
 # Local Release Packager for Windows (No GitHub Actions required)
 param (
-    [string]$version = "1.0.0"
+    [string]$version = ""
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
+if (-not $version) {
+    if (Test-Path "Cargo.toml") {
+        $matched = Select-String -Path "Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"'
+        if ($matched) {
+            $version = $matched.Matches[0].Groups[1].Value
+        }
+    }
+    if (-not $version) { $version = "0.1.0" }
+}
 $version = $version.TrimStart('v')
 $os = "windows"
 $arch = "x86_64"
