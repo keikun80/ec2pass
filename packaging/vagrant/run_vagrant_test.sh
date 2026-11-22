@@ -51,7 +51,7 @@ echo -e "\n${YELLOW}[4/4] Retrieving Linux release package from guest VM to host
 mkdir -p "$PROJECT_ROOT/dist"
 SSH_KEY="$(vagrant ssh-config | grep IdentityFile | awk '{print $2}')"
 SSH_PORT="$(vagrant ssh-config | grep Port | awk '{print $2}')"
-scp -i "$SSH_KEY" -P "$SSH_PORT" -o StrictHostKeyChecking=no 'vagrant@127.0.0.1:/vagrant/dist/ec2pass-*-linux-*' "$PROJECT_ROOT/dist/"
+scp -i "$SSH_KEY" -P "$SSH_PORT" -o StrictHostKeyChecking=no 'vagrant@127.0.0.1:/vagrant/dist/ec2pass-*-linux-*.tar.gz*' "$PROJECT_ROOT/dist/"
 
 echo -e "\n${GREEN}================================================================${NC}"
 echo -e "${GREEN}  SUCCESS: Linux build, E2E tests, and release packaging PASSED!${NC}"

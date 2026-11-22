@@ -9,8 +9,8 @@ Vagrant.configure("2") do |config|
   config.vm.box = ENV["VAGRANT_BOX"] || "bento/amazonlinux-2023"
   config.vm.hostname = "ec2pass-al2023"
 
-  # Forward daemon RPC port (50051) for optional host-to-guest debugging
-  config.vm.network "forwarded_port", guest: 50051, host: 50051, auto_correct: true, id: "ec2passd"
+  # Optional: Forward daemon RPC port (50051) only if needed for host debugging
+  # config.vm.network "forwarded_port", guest: 50051, host: 50051, auto_correct: true, id: "ec2passd"
 
   # Disable SMB synced folder to eliminate Windows password / PIN prompts
   config.vm.synced_folder ".", "/vagrant", disabled: true
