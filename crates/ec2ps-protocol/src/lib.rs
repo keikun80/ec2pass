@@ -656,7 +656,7 @@ pub fn format_catalog_find(
 ) -> Result<String> {
     match format {
         OutputFormat::Table => {
-            let headers = ["Image", "Aliases", "Version", "Description"];
+            let headers = ["Image", "Aliases", "Version"];
             let mut rows = Vec::with_capacity(entries.len());
             for e in entries {
                 let primary_alias = e
@@ -673,7 +673,6 @@ pub fn format_catalog_find(
                     primary_alias,
                     other_aliases,
                     e.version.clone(),
-                    e.description.clone(),
                 ]);
             }
             Ok(render_ascii_table(&headers, &rows))
@@ -794,5 +793,28 @@ mod tests {
         assert_eq!(InstanceState::Stopped.as_str(), "Stopped");
         assert_eq!(InstanceState::Suspended.as_str(), "Suspended");
         assert_eq!(InstanceState::Deleted.as_str(), "Deleted");
+    }
+
+    #[test]
+    fn test_format_catalog_find_no_description() {
+        let entry = ImageCatalogEntry {
+            os: "Amazon Linux".to_string(),
+            release: "Amazon Linux 2023.12 LTS".to_string(),
+            remote: "al2023".to_string(),
+            version: "2023.12.20261120.0 (Kernel 6.1)".to_string(),
+            aliases: vec!["al2023".to_string(), "default".to_string()],
+            arch: "x86_64".to_string(),
+            download_url: "https://example.com/al2023.qcow2".to_string(),
+            sha256: "abc".to_string(),
+            size_bytes: 1024,
+            description: "Some test description".to_string(),
+        };
+
+        let table = format_catalog_find(&[entry], OutputFormat::Table).unwrap();
+        assert!(table.contains("Image"));
+        assert!(table.contains("Aliases"));
+        assert!(table.contains("Version"));
+        assert!(!table.contains("Description"));
+        assert!(!table.contains("Some test description"));
     }
 }
