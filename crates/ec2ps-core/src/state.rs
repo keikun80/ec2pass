@@ -343,3 +343,27 @@ impl StateStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_state_store_allocations() {
+        let tmp_dir = std::env::temp_dir().join(format!("ec2ps_test_state_{}", rand::random::<u32>()));
+        let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
+
+        let (ssh1, qmp1) = store.allocate_ports();
+        let (ssh2, qmp2) = store.allocate_ports();
+        assert_eq!(ssh2, ssh1 + 1);
+        assert_eq!(qmp2, qmp1 + 1);
+
+        let ip = store.allocate_guest_ip();
+        assert!(ip.starts_with("10.23.104."));
+
+        let mac = store.allocate_mac();
+        assert!(mac.starts_with("52:54:00:23:"));
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+}

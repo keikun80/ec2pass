@@ -334,7 +334,6 @@ pub enum RpcResponse {
         ssh_port: u16,
         ssh_user: String,
         ssh_key_path: String,
-        is_mock: bool,
     },
     SnapshotCreated(SnapshotInfo),
     SettingsMap(BTreeMap<String, String>),
@@ -735,5 +734,28 @@ mod tests {
         assert_eq!(parse_byte_size("512M").unwrap(), 512 * 1024 * 1024);
         assert_eq!(parse_byte_size("4G").unwrap(), 4 * 1024 * 1024 * 1024);
         assert_eq!(parse_byte_size("20GiB").unwrap(), 20 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(1024 * 1024), "1.0MiB");
+        assert_eq!(format_bytes(2 * 1024 * 1024 * 1024), "2.0GiB");
+    }
+
+    #[test]
+    fn test_output_format() {
+        assert_eq!("json".parse::<OutputFormat>().unwrap(), OutputFormat::Json);
+        assert_eq!("yaml".parse::<OutputFormat>().unwrap(), OutputFormat::Yaml);
+        assert_eq!("csv".parse::<OutputFormat>().unwrap(), OutputFormat::Csv);
+        assert_eq!("table".parse::<OutputFormat>().unwrap(), OutputFormat::Table);
+        assert!("invalid".parse::<OutputFormat>().is_err());
+    }
+
+    #[test]
+    fn test_instance_state_display() {
+        assert_eq!(InstanceState::Running.as_str(), "Running");
+        assert_eq!(InstanceState::Stopped.as_str(), "Stopped");
+        assert_eq!(InstanceState::Suspended.as_str(), "Suspended");
+        assert_eq!(InstanceState::Deleted.as_str(), "Deleted");
     }
 }

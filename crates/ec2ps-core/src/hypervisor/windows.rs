@@ -10,21 +10,21 @@ use std::path::Path;
 use tokio::process::Command;
 
 /// Verifies that Windows virtualization requirements are satisfied:
-/// 1. Hyper-V PowerShell module responds, OR
-/// 2. QEMU with WHPX support is installed.
+/// 1. QEMU with WHPX / TCG support is installed (primary), OR
+/// 2. Hyper-V PowerShell module responds (secondary optional).
 pub fn check_windows_prerequisites() -> Result<()> {
-    // Check Hyper-V availability
-    if HypervDriver::detect().available {
-        return Ok(());
-    }
-
-    // Fallback: check QEMU on Windows
+    // 1. Primary engine: check QEMU on Windows
     if QemuDriver::detect_optional().is_some() {
         return Ok(());
     }
 
+    // 2. Secondary fallback: check Hyper-V availability
+    if HypervDriver::detect().available {
+        return Ok(());
+    }
+
     bail!(
-        "Neither Hyper-V nor QEMU was found on this Windows system.\n{}",
+        "QEMU virtualization binary was not found on this Windows system.\n{}",
         WINDOWS_GUIDE
     );
 }
@@ -76,10 +76,6 @@ impl VirtualMachineDriver for HypervDriver {
         "hyperv"
     }
 
-    fn is_mock(&self) -> bool {
-        false
-    }
-
     async fn create_overlay_disk(
         &self,
         base_image: &Path,
@@ -113,6 +109,9 @@ impl VirtualMachineDriver for HypervDriver {
                 New-VM -Name '{name}' -MemoryStartupBytes {mem} -Generation 2 -NoVHD | Out-Null
                 Set-VMProcessor -VMName '{name}' -Count {cpus} | Out-Null
                 Add-VMHardDiskDrive -VMName '{name}' -Path '{disk}' | Out-Null
+                # NOTE: ec2pass primarily centers on QEMU, where seed.iso is natively mounted as a CD-ROM.
+                # Hyper-V DVD drive (Add-VMDvdDrive) functionality is commented out and disabled:
+                # Add-VMDvdDrive -VMName <name> -Path <seed_iso> | Out-Null
                 Set-VMFirmware -VMName '{name}' -EnableSecureBoot Off | Out-Null
             }}
             Start-VM -Name '{name}' | Out-Null

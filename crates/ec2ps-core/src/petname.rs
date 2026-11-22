@@ -37,3 +37,22 @@ pub fn generate_petname(existing: &[String]) -> String {
     }
     format!("al2023-{}", rand::random::<u16>())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_petname() {
+        let name = generate_petname(&[]);
+        assert!(name.contains('-'));
+        let parts: Vec<&str> = name.split('-').collect();
+        assert_eq!(parts.len(), 2);
+
+        // Test exclusion of existing names
+        let existing = vec![name.clone()];
+        let name2 = generate_petname(&existing);
+        assert_ne!(name, name2);
+    }
+}
+

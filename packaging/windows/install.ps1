@@ -25,22 +25,26 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
 }
 Write-Host "Target Directory: $InstallDir" -ForegroundColor Yellow
 
-# 2. Mandatory Hypervisor Prerequisite Check
-Write-Host "`n[1/5] Checking Windows Hypervisor (Hyper-V / WHPX) status..." -ForegroundColor Gray
+# 2. Hypervisor Prerequisite Check (QEMU primary, WHPX / Hyper-V supported)
+Write-Host "`n[1/5] Checking Hypervisor engine status (QEMU / WHPX / Hyper-V)..." -ForegroundColor Gray
 $hypervReady = $false
 
-try {
-    $hypervFeature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -ErrorAction SilentlyContinue
-    if ($hypervFeature -and $hypervFeature.State -eq "Enabled") {
+# 2.1 Check QEMU virtualization engine (Primary Engine for ec2pass)
+$qemuCandidates = @(
+    "qemu-system-x86_64.exe",
+    "$env:ProgramFiles\qemu\qemu-system-x86_64.exe",
+    "${env:ProgramFiles(x86)}\qemu\qemu-system-x86_64.exe"
+)
+foreach ($qc in $qemuCandidates) {
+    if ((Get-Command $qc -ErrorAction SilentlyContinue) -or (Test-Path $qc)) {
         $hypervReady = $true
-        Write-Host "  [OK] Hyper-V native virtualization feature is active." -ForegroundColor Green
+        Write-Host "  [OK] QEMU virtualization engine detected ($qc)." -ForegroundColor Green
+        break
     }
-} catch {
-    # Non-elevated check or feature lookup fallback
 }
 
+# 2.2 Check Windows Hypervisor Platform (WHPX)
 if (-not $hypervReady) {
-    # Check WHPX
     try {
         $whpxFeature = Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -ErrorAction SilentlyContinue
         if ($whpxFeature -and $whpxFeature.State -eq "Enabled") {
@@ -50,13 +54,15 @@ if (-not $hypervReady) {
     } catch {}
 }
 
+# 2.3 Check Native Hyper-V
 if (-not $hypervReady) {
-    # Check QEMU binary in PATH
-    $qemuCmd = Get-Command qemu-system-x86_64.exe -ErrorAction SilentlyContinue
-    if ($qemuCmd) {
-        $hypervReady = $true
-        Write-Host "  [OK] QEMU virtualization binary detected in PATH." -ForegroundColor Green
-    }
+    try {
+        $hypervFeature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -ErrorAction SilentlyContinue
+        if ($hypervFeature -and $hypervFeature.State -eq "Enabled") {
+            $hypervReady = $true
+            Write-Host "  [OK] Hyper-V native virtualization feature is active." -ForegroundColor Green
+        }
+    } catch {}
 }
 
 if (-not $hypervReady -and -not $SkipHypervCheck) {
@@ -139,10 +145,14 @@ foreach ($f in $auxFiles) {
 
 # 5. Configure User/System PATH Environment Variable
 Write-Host "`n[4/5] Configuring environment PATH..." -ForegroundColor Gray
-$currentPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
-if ($currentPath -split ";" -notcontains $InstallDir) {
-    [Environment]::SetEnvironmentVariable("Path", "$currentPath;$InstallDir", [EnvironmentVariableTarget]::User)
-    Write-Host "  Added $InstallDir to User PATH." -ForegroundColor Green
+try {
+    $currentPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+    if ($currentPath -split ";" -notcontains $InstallDir) {
+        [Environment]::SetEnvironmentVariable("Path", "$currentPath;$InstallDir", [EnvironmentVariableTarget]::User)
+        Write-Host "  Added $InstallDir to User PATH." -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Could not update registry PATH automatically: $($_.Exception.Message). Please add '$InstallDir' to PATH manually if needed."
 }
 
 # 6. Verify Installation

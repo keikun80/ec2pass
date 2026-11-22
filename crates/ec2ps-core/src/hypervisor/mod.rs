@@ -20,12 +20,6 @@ pub trait VirtualMachineDriver: Send + Sync {
     /// Name of the active driver (`"qemu"` or `"hyperv"`).
     fn driver_name(&self) -> &str;
 
-    /// Returns true if the driver is running in simulation/mock mode.
-    /// (In ec2pass, simulation is prohibited; this always returns false).
-    fn is_mock(&self) -> bool {
-        false
-    }
-
     /// Creates a Copy-on-Write (`qcow2` or `vhd`) instance overlay disk backed by `base_image`.
     async fn create_overlay_disk(
         &self,
@@ -73,17 +67,9 @@ pub fn create_default_driver(preferred: Option<&str>) -> Result<Box<dyn VirtualM
     // 1. Perform prerequisite check
     check_hypervisor_prerequisites()?;
 
-    // 2. Select driver according to preference or platform default
+    // 2. Select driver: QEMU is the primary default engine across all platforms (Windows, Linux, macOS).
+    // Hyper-V is an optional secondary fallback only if explicitly requested.
     if let Some("hyperv") = preferred {
-        let hv = HypervDriver::detect();
-        if hv.available {
-            return Ok(Box::new(hv));
-        }
-    } else if let Some("qemu") = preferred {
-        return Ok(Box::new(QemuDriver::try_new()?));
-    }
-
-    if cfg!(windows) {
         let hv = HypervDriver::detect();
         if hv.available {
             return Ok(Box::new(hv));

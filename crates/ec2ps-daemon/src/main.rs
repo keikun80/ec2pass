@@ -285,7 +285,7 @@ async fn dispatch_request(
 
             let base_image_path = ctx
                 .vault
-                .ensure_base_image(&catalog_entry, ctx.driver.is_mock(), |_msg, _pct| {})
+                .ensure_base_image(&catalog_entry, |_msg, _pct| {})
                 .await?;
 
             // 3. Prepare instance directory, CoW qcow2 overlay disk, and pure-Rust seed.iso (cidata)
@@ -349,16 +349,6 @@ async fn dispatch_request(
                         mount_type: "native".to_string(),
                     },
                 );
-                // If mock mode, sync initial directory contents into guest rootfs
-                if ctx.driver.is_mock() {
-                    let guest_target = instance_dir
-                        .join("rootfs")
-                        .join(dst.trim_start_matches('/'));
-                    let src_path = PathBuf::from(&src);
-                    if src_path.exists() && src_path.is_dir() {
-                        let _ = copy_dir_recursive(&src_path, &guest_target);
-                    }
-                }
             }
 
             let details = InstanceDetails {
@@ -369,10 +359,10 @@ async fn dispatch_request(
                 image_hash: catalog_entry.sha256.clone(),
                 image_release: catalog_entry.version.clone(),
                 cpus,
-                load: vec![0.08, 0.03, 0.01],
-                memory_usage_bytes: (memory_bytes / 6).max(145 * 1024 * 1024),
+                load: vec![0.0, 0.0, 0.0],
+                memory_usage_bytes: 0,
                 memory_total_bytes: memory_bytes,
-                disk_usage_bytes: 1_420_000_000.min(disk_bytes / 2),
+                disk_usage_bytes: std::fs::metadata(&disk_path).map(|m| m.len()).unwrap_or(0),
                 disk_total_bytes: disk_bytes,
                 mounts: mount_map,
                 ssh_port,
@@ -408,24 +398,83 @@ async fn dispatch_request(
             send_progress(
                 writer,
                 "Waiting",
-                "Waiting for initialization to complete (cloud-init)...",
-                Some(95),
+                &format!("Waiting for {} to boot and cloud-init to complete...", instance_name),
+                Some(85),
             )
             .await?;
 
-            // Initialize guest rootfs in mock mode
-            let _ = ctx
-                .ssh
-                .exec_command(
-                    &instance_name,
-                    &instance_dir,
-                    ssh_port,
-                    "ec2-user",
-                    &["cloud-init status --wait".to_string()],
-                    None,
-                    ctx.driver.is_mock(),
+            let start_wait = std::time::Instant::now();
+            let timeout_secs = 120u64;
+            let mut is_ready = false;
+
+            while start_wait.elapsed() < std::time::Duration::from_secs(timeout_secs) {
+                let elapsed = start_wait.elapsed().as_secs();
+                let pct = (85 + (elapsed as f64 / timeout_secs as f64 * 14.0) as u8).min(99);
+
+                // 1. Check if SSH TCP port is open (1.5s timeout)
+                let addr = format!("127.0.0.1:{}", ssh_port);
+                let tcp_ok = match tokio::time::timeout(
+                    std::time::Duration::from_millis(1500),
+                    tokio::net::TcpStream::connect(&addr),
                 )
-                .await;
+                .await
+                {
+                    Ok(Ok(_)) => true,
+                    _ => false,
+                };
+
+                if tcp_ok {
+                    send_progress(
+                        writer,
+                        "Waiting",
+                        &format!("SSH port open. Verifying cloud-init status ({}/{}s)...", elapsed, timeout_secs),
+                        Some(pct),
+                    )
+                    .await?;
+
+                    if let Ok((stdout, _stderr, code)) = ctx
+                        .ssh
+                        .exec_command(
+                            &instance_name,
+                            &instance_dir,
+                            ssh_port,
+                            "ec2-user",
+                            &["cloud-init status --wait || true".to_string()],
+                            None,
+                        )
+                        .await
+                    {
+                        if code == 0 || stdout.contains("done") || stdout.contains("status:") {
+                            is_ready = true;
+                            break;
+                        }
+                    }
+                } else {
+                    send_progress(
+                        writer,
+                        "Waiting",
+                        &format!("Waiting for instance to boot ({}/{}s)...", elapsed, timeout_secs),
+                        Some(pct),
+                    )
+                    .await?;
+                }
+
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+
+            if !is_ready {
+                let _ = ctx.driver.stop_vm(&record, true).await;
+                record.details.state = InstanceState::Stopped;
+                let mut store = ctx.store.lock().await;
+                store.data.instances.insert(instance_name.clone(), record);
+                store.save()?;
+                bail!(
+                    "Timed out waiting for instance '{}' to initialize (SSH port {} did not respond after {}s).",
+                    instance_name,
+                    ssh_port,
+                    timeout_secs
+                );
+            }
 
             record.details.state = InstanceState::Running;
             let launched_details = record.details.clone();
@@ -435,6 +484,14 @@ async fn dispatch_request(
                 store.data.instances.insert(instance_name, record);
                 store.save()?;
             }
+
+            send_progress(
+                writer,
+                "Ready",
+                &format!("Instance {} is ready and running.", launched_details.name),
+                Some(100),
+            )
+            .await?;
 
             Ok(RpcResponse::Launched(launched_details))
         }
@@ -459,6 +516,10 @@ async fn dispatch_request(
                 } else if rec.details.state != InstanceState::Running {
                     let pid = ctx.driver.start_vm(rec).await?;
                     rec.pid = Some(pid);
+                    let _ = ctx
+                        .ssh
+                        .wait_until_ready(&name, &rec.instance_dir, rec.details.ssh_port, &rec.details.ssh_user, 60)
+                        .await;
                 }
                 rec.details.state = InstanceState::Running;
                 started.push(rec.details.clone());
@@ -618,13 +679,18 @@ async fn dispatch_request(
         }
 
         RpcRequest::List { snapshots: _ } => {
-            let store = ctx.store.lock().await;
-            let list: Vec<InstanceDetails> = store
-                .data
-                .instances
-                .values()
-                .map(|r| r.details.clone())
-                .collect();
+            let mut store = ctx.store.lock().await;
+            let mut list = Vec::with_capacity(store.data.instances.len());
+            for rec in store.data.instances.values_mut() {
+                if let Ok(meta) = std::fs::metadata(&rec.disk_path) {
+                    rec.details.disk_usage_bytes = meta.len();
+                }
+                if rec.details.state != InstanceState::Running {
+                    rec.details.load = vec![0.0, 0.0, 0.0];
+                    rec.details.memory_usage_bytes = 0;
+                }
+                list.push(rec.details.clone());
+            }
             Ok(RpcResponse::InstanceList(list))
         }
 
@@ -633,7 +699,7 @@ async fn dispatch_request(
             all,
             snapshots: _,
         } => {
-            let store = ctx.store.lock().await;
+            let mut store = ctx.store.lock().await;
             let targets = if names.is_empty() && !all {
                 store.data.instances.keys().cloned().collect()
             } else {
@@ -645,8 +711,9 @@ async fn dispatch_request(
                 let rec = store
                     .data
                     .instances
-                    .get(&name)
+                    .get_mut(&name)
                     .with_context(|| format!("Instance '{}' does not exist", name))?;
+                collect_instance_metrics(&ctx.ssh, rec).await;
                 list.push(rec.details.clone());
             }
             Ok(RpcResponse::InstanceList(list))
@@ -685,7 +752,6 @@ async fn dispatch_request(
                     &ssh_user,
                     &command,
                     working_dir.as_deref(),
-                    ctx.driver.is_mock(),
                 )
                 .await?;
 
@@ -722,7 +788,6 @@ async fn dispatch_request(
                 ssh_port: rec.details.ssh_port,
                 ssh_user: rec.details.ssh_user.clone(),
                 ssh_key_path: rec.details.ssh_key_path.clone(),
-                is_mock: ctx.driver.is_mock(),
             })
         }
 
@@ -745,19 +810,8 @@ async fn dispatch_request(
                 .to_string();
 
             let mut store = ctx.store.lock().await;
-            let rec = store
-                .data
-                .instances
-                .get(&instance)
-                .with_context(|| format!("No such instance: '{}'", instance))?;
-            let instance_dir = rec.instance_dir.clone();
-
-            // Synchronize directory into guest rootfs if running in mock mode
-            if ctx.driver.is_mock() {
-                let guest_dir = instance_dir
-                    .join("rootfs")
-                    .join(target_path.trim_start_matches('/'));
-                copy_dir_recursive(std::path::Path::new(&abs_src), &guest_dir)?;
+            if !store.data.instances.contains_key(&instance) {
+                bail!("No such instance: '{}'", instance);
             }
 
             store.add_mount(
@@ -784,7 +838,7 @@ async fn dispatch_request(
             sources,
             destination,
             recursive,
-            parents,
+            parents: _,
         } => {
             // Find which instance is referenced in either sources or destination (`instance:path`)
             let find_inst = |s: &str| -> Option<String> {
@@ -823,8 +877,6 @@ async fn dispatch_request(
                         src,
                         &destination,
                         recursive,
-                        parents,
-                        ctx.driver.is_mock(),
                     )
                     .await?;
             }
@@ -999,26 +1051,151 @@ async fn dispatch_request(
         }
 
         RpcRequest::Networks => {
-            let nets = vec![
-                NetworkInterfaceInfo {
-                    name: "virbr0".to_string(),
-                    net_type: "bridge".to_string(),
-                    description: "Virtual Bridge for Amazon Linux 2023 KVM/QEMU instances".to_string(),
-                },
-                NetworkInterfaceInfo {
-                    name: "eth0".to_string(),
-                    net_type: "ethernet".to_string(),
-                    description: "Host Primary Ethernet Adapter".to_string(),
-                },
-                NetworkInterfaceInfo {
-                    name: "ec2psbr0".to_string(),
-                    net_type: "bridge".to_string(),
-                    description: "ec2pass User-mode NAT Network (10.23.104.0/24)".to_string(),
-                },
-            ];
+            let nets = detect_host_networks().await;
             Ok(RpcResponse::NetworkList(nets))
         }
     }
+}
+
+async fn collect_instance_metrics(
+    ssh: &ec2ps_core::ssh::SshManager,
+    rec: &mut ec2ps_core::state::InstanceRecord,
+) {
+    if let Ok(meta) = std::fs::metadata(&rec.disk_path) {
+        rec.details.disk_usage_bytes = meta.len();
+    }
+
+    if rec.details.state != InstanceState::Running {
+        rec.details.load = vec![0.0, 0.0, 0.0];
+        rec.details.memory_usage_bytes = 0;
+        return;
+    }
+
+    let probe_cmd = vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        "cat /proc/loadavg 2>/dev/null; awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{print (t-a)*1024}' /proc/meminfo 2>/dev/null".to_string(),
+    ];
+
+    if let Ok(Ok((stdout, _stderr, code))) = tokio::time::timeout(
+        std::time::Duration::from_millis(1500),
+        ssh.exec_command(
+            &rec.details.name,
+            &rec.instance_dir,
+            rec.details.ssh_port,
+            &rec.details.ssh_user,
+            &probe_cmd,
+            None,
+        ),
+    )
+    .await
+    {
+        if code == 0 {
+            let lines: Vec<&str> = stdout.lines().collect();
+            if let Some(load_line) = lines.first() {
+                let load_tokens: Vec<f64> = load_line
+                    .split_whitespace()
+                    .take(3)
+                    .filter_map(|s| s.parse::<f64>().ok())
+                    .collect();
+                if load_tokens.len() == 3 {
+                    rec.details.load = load_tokens;
+                }
+            }
+            if let Some(mem_line) = lines.get(1) {
+                if let Ok(mem_bytes) = mem_line.trim().parse::<u64>() {
+                    rec.details.memory_usage_bytes = mem_bytes;
+                }
+            }
+        }
+    }
+}
+
+async fn detect_host_networks() -> Vec<NetworkInterfaceInfo> {
+    let mut networks = Vec::new();
+
+    #[cfg(windows)]
+    {
+        let ps_cmd = r#"[System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() | ForEach-Object { "$($_.Name)|$($_.NetworkInterfaceType)|$($_.Description)" }"#;
+        if let Ok(output) = tokio::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", ps_cmd])
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let parts: Vec<&str> = line.split('|').collect();
+                    if parts.len() >= 3 {
+                        let name = parts[0].trim();
+                        let raw_type = parts[1].trim();
+                        let desc = parts[2].trim();
+
+                        if raw_type == "24" || name.contains("Loopback") {
+                            continue;
+                        }
+
+                        let net_type = match raw_type {
+                            "6" => "ethernet",
+                            "71" => "wireless",
+                            "23" => "ppp",
+                            "53" => "tunnel",
+                            _ => "virtual",
+                        };
+
+                        networks.push(NetworkInterfaceInfo {
+                            name: name.to_string(),
+                            net_type: net_type.to_string(),
+                            description: desc.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
+            for entry in entries.flatten() {
+                let ifname = entry.file_name().to_string_lossy().to_string();
+                if ifname == "lo" {
+                    continue;
+                }
+
+                let if_path = entry.path();
+                let is_wireless = if_path.join("wireless").exists() || if_path.join("phy80211").exists();
+                let is_bridge = if_path.join("bridge").exists();
+
+                let net_type = if is_wireless {
+                    "wireless"
+                } else if is_bridge {
+                    "bridge"
+                } else {
+                    "ethernet"
+                };
+
+                networks.push(NetworkInterfaceInfo {
+                    name: ifname.clone(),
+                    net_type: net_type.to_string(),
+                    description: format!("Host Network Interface {}", ifname),
+                });
+            }
+        }
+    }
+
+    // Always include ec2pass user-mode NAT virtual network
+    networks.push(NetworkInterfaceInfo {
+        name: "ec2psbr0".to_string(),
+        net_type: "user-nat".to_string(),
+        description: "ec2pass User-mode NAT Virtual Network (10.23.104.0/24)".to_string(),
+    });
+
+    networks
 }
 
 fn resolve_target_names(

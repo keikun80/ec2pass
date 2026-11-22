@@ -184,10 +184,6 @@ impl super::VirtualMachineDriver for QemuDriver {
         "qemu"
     }
 
-    fn is_mock(&self) -> bool {
-        false
-    }
-
     async fn create_overlay_disk(
         &self,
         base_image: &Path,

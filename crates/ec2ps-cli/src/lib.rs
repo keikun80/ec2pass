@@ -668,133 +668,29 @@ async fn run_cli() -> Result<()> {
             };
 
             if let RpcResponse::ShellConnection {
-                instance,
+                instance: _,
                 ssh_host,
                 ssh_port,
                 ssh_user,
                 ssh_key_path,
-                is_mock,
             } = shell_resp
             {
-                if is_mock {
-                    println!(
-                        "Connected to Amazon Linux 2023 instance '{}' ({}@{}, release: {})",
-                        instance.name,
-                        ssh_user,
-                        instance.ipv4.first().map(|s| s.as_str()).unwrap_or("10.23.104.10"),
-                        instance.release
-                    );
-                    println!("Type 'exit' or 'logout' to disconnect.\n");
-
-                    use std::io::BufRead;
-                    let stdin = io::stdin();
-                    let mut stdin_lock = stdin.lock();
-                    let mut line_buf = String::new();
-                    let mut current_dir = format!("/home/{}", ssh_user);
-
-                    loop {
-                        let prompt_dir = if current_dir == format!("/home/{}", ssh_user) {
-                            "~".to_string()
-                        } else if current_dir == "/" {
-                            "/".to_string()
-                        } else {
-                            current_dir.rsplit('/').next().unwrap_or("~").to_string()
-                        };
-
-                        print!("[{}@{} {}]$ ", ssh_user, instance.name, prompt_dir);
-                        let _ = io::stdout().flush();
-                        line_buf.clear();
-
-                        if stdin_lock.read_line(&mut line_buf)? == 0 {
-                            println!();
-                            break;
-                        }
-
-                        let trimmed = line_buf.trim();
-                        if trimmed == "exit" || trimmed == "logout" {
-                            println!("logout");
-                            break;
-                        }
-                        if trimmed.is_empty() {
-                            continue;
-                        }
-
-                        // Handle `cd` client-side so current_dir is preserved across calls
-                        if trimmed == "cd" || trimmed == "cd ~" {
-                            current_dir = format!("/home/{}", ssh_user);
-                            continue;
-                        } else if trimmed.starts_with("cd ") {
-                            let arg = trimmed.strip_prefix("cd ").unwrap().trim();
-                            if arg == ".." {
-                                if current_dir != "/" {
-                                    if let Some(idx) = current_dir.rfind('/') {
-                                        if idx == 0 {
-                                            current_dir = "/".to_string();
-                                        } else {
-                                            current_dir = current_dir[..idx].to_string();
-                                        }
-                                    }
-                                }
-                            } else if arg.starts_with('/') {
-                                current_dir = arg.to_string();
-                            } else {
-                                if current_dir == "/" {
-                                    current_dir = format!("/{}", arg);
-                                } else {
-                                    current_dir = format!("{}/{}", current_dir, arg);
-                                }
-                            }
-                            continue;
-                        }
-
-                        let exec_resp = send_rpc(
-                            addr,
-                            RpcRequest::Exec {
-                                name: instance.name.clone(),
-                                command: vec![trimmed.to_string()],
-                                working_dir: Some(current_dir.clone()),
-                            },
-                            false,
-                        )
-                        .await;
-
-                        match exec_resp {
-                            Ok(RpcResponse::ExecResult {
-                                stdout,
-                                stderr,
-                                exit_code: _,
-                            }) => {
-                                if !stdout.is_empty() {
-                                    print!("{}", stdout);
-                                    let _ = io::stdout().flush();
-                                }
-                                if !stderr.is_empty() {
-                                    eprint!("{}", stderr);
-                                    let _ = io::stderr().flush();
-                                }
-                            }
-                            Ok(_) => {}
-                            Err(e) => eprintln!("error: {}", e),
-                        }
-                    }
-                } else {
-                    let status = std::process::Command::new("ssh")
-                        .args([
-                            "-i",
-                            &ssh_key_path,
-                            "-p",
-                            &ssh_port.to_string(),
-                            "-o",
-                            "StrictHostKeyChecking=no",
-                            "-o",
-                            "UserKnownHostsFile=/dev/null",
-                            &format!("{}@{}", ssh_user, ssh_host),
-                        ])
-                        .status()
-                        .context("Failed to launch interactive ssh client")?;
-                    if !status.success() {
-                        std::process::exit(status.code().unwrap_or(1));
-                    }
+                let status = std::process::Command::new("ssh")
+                    .args([
+                        "-i",
+                        &ssh_key_path,
+                        "-p",
+                        &ssh_port.to_string(),
+                        "-o",
+                        "StrictHostKeyChecking=no",
+                        "-o",
+                        "UserKnownHostsFile=/dev/null",
+                        &format!("{}@{}", ssh_user, ssh_host),
+                    ])
+                    .status()
+                    .context("Failed to launch interactive ssh client")?;
+                if !status.success() {
+                    std::process::exit(status.code().unwrap_or(1));
                 }
             }
         }

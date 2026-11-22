@@ -57,21 +57,21 @@ the macOS kernel Hypervisor.framework (HVF) hardware acceleration.
 
 pub const WINDOWS_GUIDE: &str = r#"
 ================================================================================
-[PREREQUISITE MISSING] Windows hypervisor (Hyper-V / WHPX) was not detected.
-ec2pass requires Hyper-V or WHPX hardware acceleration on Windows.
+[PREREQUISITE MISSING] Windows virtualization engine (QEMU) was not detected.
+ec2pass primarily centers on QEMU with WHPX / TCG hardware acceleration on Windows.
 (Simulation/mock mode is not supported).
 
-▶ Resolution steps (choose one option below):
-  1. [Recommended] Enable Hyper-V (Windows Pro / Enterprise):
-     Open an Administrator PowerShell and run:
-       Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
+▶ Resolution steps:
+  1. [Recommended] Install QEMU for Windows:
+     winget install SoftwareFreedomConservancy.QEMU
+     (or download installer from https://www.qemu.org/download/#windows)
 
-  2. [Alternative] Enable Windows Hypervisor Platform (WHPX):
+  2. Enable Windows Hypervisor Platform (WHPX) for hardware acceleration:
      Open an Administrator PowerShell and run:
        Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All
 
-  3. Install QEMU for Windows:
-     winget install SoftwareFreedomConservancy.QEMU
+  3. Verify installation:
+     qemu-system-x86_64 --version
 ================================================================================
 "#;
 

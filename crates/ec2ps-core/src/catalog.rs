@@ -4,8 +4,7 @@
 //! - `https://cdn.amazonlinux.com/al2023/os-images/latest/kvm/`
 //! - `https://cdn.amazonlinux.com/al2023/os-images/latest/kvm-arm64/`
 //!
-//! Also provides built-in curated catalog entries so `ec2pass find` and offline/mock launches
-//! work out-of-the-box even in air-gapped or sandboxed environments.
+//! Also provides built-in curated catalog entries so `ec2pass find` works out-of-the-box.
 
 use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
@@ -161,6 +160,28 @@ impl ImageVault {
                     }
                 }
             }
+
+            // Also query live SHA256SUMS from the CDN to populate official image hash
+            let sums_url = format!("{}SHA256SUMS", cdn_url);
+            if let Ok(resp) = client.get(&sums_url).send().await {
+                if resp.status().is_success() {
+                    if let Ok(sums_text) = resp.text().await {
+                        if let Some(first) = catalog.first_mut() {
+                            let target_filename = first.download_url.rsplit('/').next().unwrap_or("");
+                            for line in sums_text.lines() {
+                                let mut parts = line.split_whitespace();
+                                if let (Some(hash), Some(fname)) = (parts.next(), parts.next()) {
+                                    let clean_fname = fname.trim_start_matches('*');
+                                    if clean_fname == target_filename {
+                                        first.sha256 = hash.to_lowercase();
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         catalog
@@ -217,12 +238,9 @@ impl ImageVault {
     }
 
     /// Ensures the base `.qcow2` image exists in the local vault cache.
-    /// In Mock driver mode (when QEMU is not installed or offline), creates a lightweight stub qcow2
-    /// header so all lifecycle operations (launch, snapshot, clone, info) work instantaneously.
     pub async fn ensure_base_image<F>(
         &self,
         entry: &ImageCatalogEntry,
-        is_mock_driver: bool,
         mut on_progress: F,
     ) -> Result<PathBuf>
     where
@@ -243,25 +261,16 @@ impl ImageVault {
         let target_path = self.cache_dir.join(filename);
 
         if target_path.exists() {
-            on_progress(
-                &format!("Found cached image '{}' in ImageVault", entry.release),
-                Some(100),
-            );
-            return Ok(target_path);
-        }
-
-        if is_mock_driver {
-            on_progress(
-                &format!("Retrieving image: {} ({})", entry.release, entry.version),
-                Some(25),
-            );
-            // Write a valid QCOW2 v3 magic header stub so disk inspection / snapshot tools recognize it
-            let mut qcow2_stub = vec![0u8; 4096];
-            qcow2_stub[0..4].copy_from_slice(b"QFI\xfb"); // QCOW magic
-            qcow2_stub[4..8].copy_from_slice(&3u32.to_be_bytes()); // version 3
-            fs::write(&target_path, &qcow2_stub).await?;
-            on_progress("Verifying image SHA256 checksum...", Some(100));
-            return Ok(target_path);
+            if let Ok(meta) = fs::metadata(&target_path).await {
+                if meta.len() > 0 {
+                    on_progress(
+                        &format!("Found cached image '{}' in ImageVault", entry.release),
+                        Some(100),
+                    );
+                    return Ok(target_path);
+                }
+            }
+            let _ = fs::remove_file(&target_path).await;
         }
 
         // Real network download from Amazon Linux 2023 CDN
@@ -291,9 +300,11 @@ impl ImageVault {
         let mut stream = resp.bytes_stream();
         let mut downloaded: u64 = 0;
         let mut last_pct: u8 = 0;
+        let mut hasher = Sha256::new();
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
+            hasher.update(&chunk);
             file.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
             if total_size > 0 {
@@ -310,8 +321,58 @@ impl ImageVault {
         file.flush().await?;
         drop(file);
 
+        let computed_hash = hex::encode(hasher.finalize());
+        let expected_hash = entry.sha256.trim().to_lowercase();
+        if !expected_hash.is_empty() && !expected_hash.starts_with("e3b0c4") {
+            if computed_hash != expected_hash {
+                let _ = fs::remove_file(&tmp_path).await;
+                bail!(
+                    "SHA256 checksum mismatch for '{}'!\nExpected: {}\nComputed: {}",
+                    entry.download_url,
+                    expected_hash,
+                    computed_hash
+                );
+            }
+            tracing::info!("SHA256 verified successfully: {}", computed_hash);
+        }
+
         fs::rename(&tmp_path, &target_path).await?;
+        let sha_path = target_path.with_extension("qcow2.sha256");
+        let _ = fs::write(&sha_path, format!("{}  {}\n", computed_hash, filename)).await;
+
         on_progress("Download complete.", Some(100));
         Ok(target_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_builtin_catalog_has_al2023() {
+        let cat = ImageVault::builtin_catalog();
+        assert!(!cat.is_empty());
+        let default_img = &cat[0];
+        assert_eq!(default_img.os, "Amazon Linux");
+        assert!(default_img.aliases.contains(&"default".to_string()));
+        assert!(default_img.aliases.contains(&"al2023".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_image_aliases() {
+        let tmp = std::env::temp_dir().join(format!("ec2ps_vault_test_{}", rand::random::<u32>()));
+        let vault = ImageVault::new(tmp.clone()).unwrap();
+
+        let entry = vault.resolve_image(Some("default")).await.unwrap();
+        assert!(entry.release.contains("Amazon Linux"));
+
+        let minimal = vault.resolve_image(Some("minimal")).await.unwrap();
+        assert!(minimal.release.contains("Minimal") || minimal.aliases.contains(&"minimal".to_string()));
+
+        let custom = vault.resolve_image(Some("https://example.com/custom.qcow2")).await.unwrap();
+        assert_eq!(custom.remote, "custom");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
