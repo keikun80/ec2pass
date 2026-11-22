@@ -1,6 +1,7 @@
 # InhausLab ec2pass
 
 [![Rust](https://img.shields.io/badge/rust-2021_edition-orange.svg)](https://www.rust-lang.org/)
+[![Version: 0.1.1](https://img.shields.io/badge/version-0.1.1-green.svg)](RELEASE_NOTES.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support)
 
@@ -16,11 +17,14 @@
 - **Pure Rust Architecture**: Clean-room implementation built on the modern Rust 2021 edition.
 - **Pure Rust ISO9660 / NoCloud Engine**: Built-in `ec2ps-iso9660` generates Rock Ridge / Joliet `cidata` seed ISOs directly in memory with zero external utilities (`mkisofs`, `genisoimage`, or `xorriso` are not required).
 - **Official AWS AL2023 Images**: Automatically discovers and streams official AWS KVM images from the AWS CDN, verifying SHA256 checksums and caching them locally.
-- **Strict Native Hypervisors (No Simulation)**:
-  - **Linux**: Kernel-based Virtual Machine (**KVM**) via QEMU (`-enable-kvm -cpu host`).
+- **Dynamic Download Progress**: Live terminal ASCII progress bar, percentage (`[XX%]`), downloaded bytes/total (`(X.XGiB / Y.YGiB)`), and SHA-256 verification when pulling AWS CDN images.
+- **Clean Catalog & Automatic Aliasing**: Streamlined `find` table output; automatic resolution for legacy and convenience aliases (`al2023-k6.12`, `kernel-6.12`, `minimal`, `micro`).
+- **Resilient Hypervisor Layer**: Automatic QMP socket connection retry loop with backoff to prevent race conditions during rapid lifecycle transitions; unaccelerated fallback (`EC2PASS_ALLOW_UNACCELERATED=1`) for nested virtualization and CI environments.
+- **Comprehensive Multi-Platform Test Automation**: Automated 38-combination matrix tests across macOS, Linux, and Windows with 100% pass verification.
+- **Strict Native Hypervisors**:
+  - **Linux**: Kernel-based Virtual Machine (**KVM**) via QEMU (`-enable-kvm -cpu host`) with optional software TCG fallback.
   - **macOS**: Hypervisor.framework (**HVF**) via QEMU (`-accel hvf -cpu host`).
   - **Windows**: Windows Hypervisor Platform (**WHPX**) or native **Hyper-V**.
-  - *Simulation or mock modes are strictly disabled: real hypervisor hardware acceleration is required.*
 - **Two-Tier Storage Separation**: Execution binaries (`%LOCALAPPDATA%\Programs\ec2pass` or `/usr/local/bin`) and persistent VM data (`%LOCALAPPDATA%\ec2pass` or `~/.local/share/ec2pass`) are cleanly isolated. Reinstallations or updates never touch existing VM images or SSH keys.
 - **Enterprise Uninstaller**: Clean removal via GUI Settings, shell script, or batch file, with an optional `-PurgeData` flag to wipe VM disks and caches.
 
@@ -42,9 +46,13 @@ ec2pass/
 │   ├── linux/             # Linux package & systemd unit (install.sh, uninstall.sh)
 │   └── vagrant/           # Automated AL2023 KVM integration test environment
 ├── tests/
-│   └── e2e_test.sh        # Comprehensive 7-stage end-to-end lifecycle verification test suite
+│   ├── comprehensive_matrix_test.sh   # Automated 38-combination matrix test runner (Bash)
+│   ├── comprehensive_matrix_test.ps1  # Automated 38-combination matrix test runner (PowerShell)
+│   ├── e2e_test.sh        # Comprehensive 7-stage end-to-end lifecycle verification test suite (Bash)
+│   └── e2e_test.ps1       # Comprehensive 7-stage end-to-end lifecycle verification test suite (PowerShell)
 ├── README.md
 ├── MANUAL.md              # Full CLI reference guide
+├── RELEASE_NOTES.md       # Version release notes and changelog
 ├── platform.md            # Multi-platform support matrix and hypervisor setup guide
 ├── USERDATA.md            # Shell script and cloud-init user-data testing guide
 └── BUILD_AND_RELEASE.md   # Compilation and packaging instructions
@@ -89,10 +97,10 @@ ec2pass mount ./src dev-box:/home/ec2-user/src
 ```bash
 # Take a snapshot
 ec2pass stop dev-box
-ec2pass snapshot dev-box --name pre-update
+ec2pass snapshot dev-box -n pre-update -c "Backup before package update"
 
 # Restore from snapshot
-ec2pass restore dev-box.pre-update
+ec2pass restore dev-box -s pre-update
 
 # Delete and purge
 ec2pass delete dev-box

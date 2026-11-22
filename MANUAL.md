@@ -24,34 +24,45 @@ ec2pass [OPTIONS] <COMMAND>
 ## 2. Command Reference
 
 ### 2.1 `find` - Search Available Image Catalog
-Queries available operating system images from the official AWS Amazon Linux 2023 distribution CDN.
+Queries available operating system images from the official AWS Amazon Linux 2023 distribution CDN. The default table view cleanly displays `Image`, `Aliases`, and `Version` (the verbose `Description` column is omitted for optimal terminal layout).
 
 ```bash
-ec2pass find [SEARCH_STRING] [--show-unsupported] [--force-update] [--format <FORMAT>]
+ec2pass find [SEARCH_STRING] [--show-versions] [--format <FORMAT>]
 ```
 * **Arguments & Flags**:
-  * `[SEARCH_STRING]`: Filter keywords (e.g., `minimal`, `kernel`, `al2`).
-  * `--force-update`: Force refresh of the remote AWS CDN image index.
+  * `[SEARCH_STRING]`: Filter keywords (e.g., `al2023`, `al2`, `2023.12`).
+  * `--show-versions`: List all historical release versions published on the AWS CDN.
   * `--format <FORMAT>`: Output format (`table`, `json`, `yaml`, `csv`).
 * **Examples**:
   ```bash
-  # List all available images
+  # List official verified images (clean table)
   ec2pass find
 
-  # Filter with JSON output
-  ec2pass find minimal --format json
+  # Output:
+  # Image    Aliases                            Version
+  # al2023   2023,default,latest,lts,amzn2023   2023.12.20261120.0 (Kernel 6.1)
+  # al2      amzn2                              2.0.20250220.0
+
+  # Search specific image with JSON output
+  ec2pass find al2023 --format json
+
+  # List all AWS CDN versions filtered by 2023.12
+  ec2pass find 2023.12 --show-versions --format json
   ```
 
 ---
 
 ### 2.2 `launch` - Create and Boot an Instance
-Creates a CoW QCOW2 overlay disk and NoCloud `seed.iso` from an Amazon Linux 2023 base image, then boots the instance.
+Creates a CoW QCOW2 overlay disk and NoCloud `seed.iso` from an Amazon Linux 2023 base image, then boots the instance. When downloading an image from the AWS CDN for the first time, a live dynamic ASCII progress bar with percentage, download size, and SHA-256 verification is displayed.
 
 ```bash
 ec2pass launch [IMAGE] [OPTIONS]
 ```
 * **Options**:
-  * `[IMAGE]`: Image alias (default: `al2023` / `latest`). Supported: `al2023` (or specific version like `al2023:<version>`), `al2`, `al2023-k6.12`, `minimal`, or a custom image path/URL.
+  * `[IMAGE]`: Image alias (default: `al2023` / `latest`).
+    * Official LTS: `al2023` (or pinned version `al2023:<version>`), `al2`.
+    * Smart Compatibility Fallbacks: `al2023-k6.12`, `kernel-6.12`, `minimal`, and `micro` automatically resolve to the official AL2023 LTS image.
+    * Custom: Path to a local QCOW2 image or a direct HTTP(S) URL.
   * `-n, --name <NAME>`: Instance name (auto-generates petnames such as `bouncy-lynx` if omitted).
   * `-c, --cpus <COUNT>`: Number of vCPUs to allocate (default: `1`).
   * `-m, --memory <SIZE>`: Memory size (default: `1G`, e.g., `512M`, `2G`, `4GiB`).
@@ -59,6 +70,12 @@ ec2pass launch [IMAGE] [OPTIONS]
   * `--cloud-init <FILE|- >`: Path to a cloud-config YAML file or shell script (or `-` for stdin).
   * `--mount <LOCAL:GUEST>`: Mount a host directory on initial launch.
   * `--timeout <SECS>`: Maximum wait time for instance ready state (default: `300`).
+* **Live Download Progress Display**:
+  ```text
+  [ 85%] [Retrieving image] [================>   ] Downloading Amazon Linux 2023.12 LTS (1.4GiB / 1.6GiB)
+  [100%] [Retrieving image] [====================] Download complete. Verifying SHA256 checksum...
+  [100%] [Retrieving image] [====================] SHA256 verified successfully.
+  ```
 * **Examples**:
   ```bash
   # Launch default instance
@@ -207,13 +224,13 @@ Captures point-in-time disk and hardware configuration for stopped instances and
 ec2pass snapshot <INSTANCE> [-n <NAME>] [-c <COMMENT>]
 
 # Restore from snapshot
-ec2pass restore <INSTANCE>.<SNAPSHOT_NAME>
+ec2pass restore <INSTANCE> -s <SNAPSHOT_NAME>
 ```
 * **Examples**:
   ```bash
   ec2pass stop ec2-dev
-  ec2pass snapshot ec2-dev --name pre-upgrade --comment "Backup before kernel update"
-  ec2pass restore ec2-dev.pre-upgrade
+  ec2pass snapshot ec2-dev -n pre-upgrade -c "Backup before kernel update"
+  ec2pass restore ec2-dev -s pre-upgrade
   ```
 
 ---
@@ -222,7 +239,7 @@ ec2pass restore <INSTANCE>.<SNAPSHOT_NAME>
 Clones a stopped instance's disk and hardware configuration into a new, independent instance.
 
 ```bash
-ec2pass clone <SOURCE_NAME> [-n <NEW_NAME>]
+ec2pass clone <SOURCE_NAME> -n <NEW_NAME>
 ```
 * **Examples**:
   ```bash
@@ -276,14 +293,18 @@ ec2pass start ec2-dev
 Exposes commands installed inside an instance as local host CLI commands.
 
 ```bash
-# Expose the dnf package manager from ec2-dev to host shell
-ec2pass alias ec2-dev:dnf
+# Expose uptime from matrix-std to host shell as host-uptime
+ec2pass alias matrix-std:uptime host-uptime
 
-# List active aliases
+# List active aliases (table or json)
 ec2pass aliases
+ec2pass aliases --format json
+
+# Execute aliased command
+ec2pass host-uptime
 
 # Remove alias
-ec2pass unalias dnf
+ec2pass unalias host-uptime
 ```
 
 ---
@@ -466,3 +487,28 @@ ec2pass/
 └── state.json
     # Atomic JSON database storing instance state, IP, vCPU, RAM, disk, mounts
 ```
+
+---
+
+## 7. Advanced Operating Modes & Test Automation
+
+### 7.1 Unaccelerated Fallback Mode (`EC2PASS_ALLOW_UNACCELERATED=1`)
+In virtualized CI/CD pipelines, Docker containers, or nested hypervisors where hardware acceleration (`/dev/kvm` or `HVF`) is not physically exposed, `ec2pass` provides an optional software emulation fallback:
+
+```bash
+# Enable software emulation mode for nested/CI testing
+export EC2PASS_ALLOW_UNACCELERATED=1
+ec2pass launch al2023 -n ci-box
+```
+
+### 7.2 Multi-Platform Comprehensive Test Matrix
+To automatically test and capture all 26 subcommands and 38 parameter permutations on your platform:
+
+* **Linux / macOS (Bash)**:
+  ```bash
+  REPORT_FILE="test_report.md" bash tests/comprehensive_matrix_test.sh
+  ```
+* **Windows (PowerShell)**:
+  ```powershell
+  pwsh -File tests\comprehensive_matrix_test.ps1 -ReportFile "test_report.md"
+  ```

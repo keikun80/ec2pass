@@ -39,15 +39,33 @@ This generates the following binaries in `target/release/`:
 
 ## 3. Running Tests
 
+### 3.1 Unit & Component Tests
 Run the Rust workspace test suite:
 ```bash
 cargo test --workspace
 ```
 
-Run the end-to-end (E2E) integration test suite (requires local hypervisor):
-```bash
-./tests/e2e_test.sh
-```
+### 3.2 End-to-End (E2E) Integration Tests
+Run the standard 7-stage lifecycle verification test suite:
+* **Linux / macOS**:
+  ```bash
+  ./tests/e2e_test.sh
+  ```
+* **Windows (PowerShell)**:
+  ```powershell
+  pwsh -File .\tests\e2e_test.ps1
+  ```
+
+### 3.3 Comprehensive Subcommand & Option Matrix Test
+Runs all 26 subcommands and 38 parameter/formatting permutations, capturing output to a markdown report:
+* **Linux / macOS**:
+  ```bash
+  REPORT_FILE="packaging/test_results_local.md" bash tests/comprehensive_matrix_test.sh
+  ```
+* **Windows (PowerShell)**:
+  ```powershell
+  pwsh -File tests\comprehensive_matrix_test.ps1 -ReportFile "packaging\test_results_local.md"
+  ```
 
 ---
 
@@ -58,24 +76,24 @@ The repository includes automated packaging scripts in `packaging/`:
 ### macOS Universal 2 Binary Package
 Builds both `x86_64-apple-darwin` and `aarch64-apple-darwin` targets and bundles them using `lipo`:
 ```bash
-./packaging/macos/build_macos_packages.sh
+./packaging/macos/build_macos_packages.sh v0.1.1
 ```
 This generates:
-- `dist/ec2pass-v1.0.0-darwin-universal.tar.gz` containing `ec2pass`, `ec2passd`, documentation, and `packaging/macos/install.sh`.
+- `dist/ec2pass-v0.1.1-darwin-universal.tar.gz` containing `ec2pass`, `ec2passd`, documentation, and `packaging/macos/install.sh`.
 
 ### Linux Release Package
 On a Linux host (or inside the Vagrant AL2023 environment):
 ```bash
-bash packaging/build_release.sh
+bash packaging/build_release.sh v0.1.1
 ```
-This generates `dist/ec2pass-v1.0.0-linux-x86_64.tar.gz`.
+This generates `dist/ec2pass-v0.1.1-linux-x86_64.tar.gz`.
 
 ### Windows Release Package
 On a Windows host (PowerShell):
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1
+powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1 -version "v0.1.1"
 ```
-This generates `dist\ec2pass-v1.0.0-windows-x86_64.zip`.
+This generates `dist\ec2pass-v0.1.1-windows-x86_64.zip`.
 
 ---
 
@@ -86,10 +104,10 @@ This repository includes a fully automated release pipeline in [`.github/workflo
 When you push a version tag to GitHub:
 ```bash
 # 1. Create a release tag
-git tag v1.0.0
+git tag v0.1.1
 
 # 2. Push the tag to GitHub
-git push origin v1.0.0
+git push origin v0.1.1
 ```
 
 GitHub Actions will automatically:

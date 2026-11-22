@@ -75,7 +75,11 @@ cargo build --workspace --release
 # 2. Run unit tests
 cargo test --workspace
 
-# 3. Test ec2pass commands directly
+# 3. Run comprehensive 38-combination subcommand and option test matrix
+export EC2PASS_ALLOW_UNACCELERATED=1  # Required if nested virtualization is unaccelerated
+REPORT_FILE="/vagrant/packaging/test_results_linux_al2023.md" bash tests/comprehensive_matrix_test.sh
+
+# 4. Test ec2pass commands directly
 /usr/local/bin/ec2pass --version
 /usr/local/bin/ec2pass find
 /usr/local/bin/ec2pass launch al2023 -n dev-box

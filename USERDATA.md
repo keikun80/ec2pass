@@ -111,7 +111,7 @@ To verify that your installation script is idempotent or test failure recovery:
 ```bash
 # 1. Stop the clean instance and take a snapshot
 ec2pass stop test-bootstrap
-ec2pass snapshot test-bootstrap --name base-clean
+ec2pass snapshot test-bootstrap -n base-clean -c "Clean base state"
 
 # 2. Start the instance and run your script
 ec2pass start test-bootstrap
@@ -119,7 +119,7 @@ ec2pass exec test-bootstrap -- bash -s < ./deploy.sh
 
 # 3. Roll back to the clean snapshot to test again
 ec2pass stop test-bootstrap
-ec2pass restore test-bootstrap.base-clean
+ec2pass restore test-bootstrap -s base-clean
 ec2pass start test-bootstrap
 ```
 
