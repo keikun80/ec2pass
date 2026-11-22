@@ -91,9 +91,22 @@ impl QemuDriver {
     /// Sends a JSON QMP command (`system_powerdown`, `stop`, `cont`, `quit`) to the VM's QMP TCP socket.
     pub async fn send_qmp_command(&self, qmp_port: u16, execute_cmd: &str) -> Result<()> {
         let addr = format!("127.0.0.1:{}", qmp_port);
-        let stream = TcpStream::connect(&addr)
-            .await
-            .with_context(|| format!("Failed to connect to QMP socket at {}", addr))?;
+        let mut stream = None;
+        for i in 0..10 {
+            match TcpStream::connect(&addr).await {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(_) if i < 9 => {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| format!("Failed to connect to QMP socket at {}", addr));
+                }
+            }
+        }
+        let stream = stream.unwrap();
         let (reader, mut writer) = stream.into_split();
         let mut lines = BufReader::new(reader).lines();
 
