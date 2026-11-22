@@ -1,6 +1,6 @@
-# InhausLab ec2pass v0.1.1 Release Notes
+# InhausLab ec2pass 0.1.1 Release Notes
 
-**Release Version**: `v0.1.1`  
+**Release Version**: `0.1.1`  
 **Release Date**: 2026-11-22  
 **Target Architecture**: macOS Darwin (x86_64 / Apple Silicon Universal 2), Linux (x86_64), Windows 11 (x86_64)
 
@@ -8,11 +8,11 @@
 
 ## Overview
 
-InhausLab `ec2pass` v0.1.1 delivers critical usability, catalog reliability, and hypervisor resilience enhancements, alongside full multi-platform matrix verification across macOS, Linux (Amazon Linux 2023), and Windows 11.
+InhausLab `ec2pass` 0.1.1 delivers critical usability, catalog reliability, and hypervisor resilience enhancements, alongside full multi-platform matrix verification across macOS, Linux (Amazon Linux 2023), and Windows 11.
 
 ---
 
-## What's New in v0.1.1
+## What's New in 0.1.1
 
 ### 1. Real-Time Image Download Progress Bar & Percentage
 * When downloading Amazon Linux 2023 or Amazon Linux 2 base images from the official AWS CDN, `ec2pass` now displays a live, dynamic ASCII progress bar and percentage indicator:
@@ -45,21 +45,21 @@ InhausLab `ec2pass` v0.1.1 delivers critical usability, catalog reliability, and
 
 ### macOS (Homebrew / Direct Binary)
 ```bash
-# Update existing binary or replace with v0.1.1
-curl -fsSL https://github.com/keikun80/ec2pass/releases/download/v0.1.1/ec2pass-v0.1.1-macos-universal.tar.gz | tar -xz -C /usr/local/bin
+# Update existing binary or replace with 0.1.1
+curl -fsSL https://github.com/keikun80/ec2pass/releases/download/0.1.1/ec2pass-0.1.1-macos-universal.tar.gz | tar -xz -C /usr/local/bin
 ```
 
 ### Linux (Amazon Linux 2023 / Enterprise Linux 9 / Ubuntu)
 ```bash
-# Download and install v0.1.1 release package
-curl -fsSL https://github.com/keikun80/ec2pass/releases/download/v0.1.1/ec2pass-v0.1.1-linux-x86_64.tar.gz | tar -xz -C /tmp
-sudo /tmp/ec2pass-v0.1.1-linux-x86_64/install.sh
+# Download and install 0.1.1 release package
+curl -fsSL https://github.com/keikun80/ec2pass/releases/download/0.1.1/ec2pass-0.1.1-linux-x86_64.tar.gz | tar -xz -C /tmp
+sudo /tmp/ec2pass-0.1.1-linux-x86_64/install.sh
 ```
 
 ### Windows 11 (PowerShell)
 ```powershell
 # Extract release ZIP and execute Setup.bat / install.ps1
-Invoke-WebRequest -Uri https://github.com/keikun80/ec2pass/releases/download/v0.1.1/ec2pass-v0.1.1-windows-x86_64.zip -OutFile ec2pass.zip
+Invoke-WebRequest -Uri https://github.com/keikun80/ec2pass/releases/download/0.1.1/ec2pass-0.1.1-windows-x86_64.zip -OutFile ec2pass.zip
 Expand-Archive -Path ec2pass.zip -DestinationPath C:\ec2pass
 & C:\ec2pass\install.ps1
 ```
@@ -72,4 +72,4 @@ Expand-Archive -Path ec2pass.zip -DestinationPath C:\ec2pass
 * `fix(catalog)`: Remove non-existent CDN images and alias legacy variants to al2023
 * `fix(qemu)`: Add retry loop for QMP socket connection during rapid restart
 * `test(matrix)`: Add multi-platform comprehensive subcommand and option test matrix runners and captured results
-* `chore(release)`: Bump version to 0.1.1 and add v0.1.1 release notes
+* `chore(release)`: Bump version to 0.1.1 and add 0.1.1 release notes

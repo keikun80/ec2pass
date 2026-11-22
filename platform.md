@@ -99,7 +99,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
 
 ---
 
-## 5. Multi-Platform Verification Results (v0.1.1)
+## 5. Multi-Platform Verification Results (0.1.1)
 
 All 26 subcommands and 38 parameter/format permutations have been comprehensively tested with a **100% pass rate** across all supported platforms:
 

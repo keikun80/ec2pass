@@ -30,7 +30,7 @@ cargo test --workspace
 
 # 3. Create Distribution Staging Directory
 echo -e "\n${CYAN}[3/4] Staging release artifacts...${NC}"
-PACKAGE_NAME="ec2pass-v${VERSION}-${OS}-${ARCH}"
+PACKAGE_NAME="ec2pass-${VERSION}-${OS}-${ARCH}"
 DIST_ROOT="dist"
 STAGE_DIR="${DIST_ROOT}/${PACKAGE_NAME}"
 ARCHIVE_PATH="${DIST_ROOT}/${PACKAGE_NAME}.tar.gz"

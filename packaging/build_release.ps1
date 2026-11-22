@@ -28,8 +28,8 @@ cargo build --workspace --release
 cargo test --workspace
 
 # 3. Create dist archive
-$distDir = "dist\ec2pass-v$version-$os-$arch"
-$archiveName = "dist\ec2pass-v$version-$os-$arch.zip"
+$distDir = "dist\ec2pass-$version-$os-$arch"
+$archiveName = "dist\ec2pass-$version-$os-$arch.zip"
 
 if (Test-Path $distDir) { Remove-Item -Path $distDir -Recurse -Force }
 if (Test-Path $archiveName) { Remove-Item -Path $archiveName -Force }

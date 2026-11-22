@@ -73,8 +73,8 @@ echo -e "\n${YELLOW}[4/4] Retrieving Windows 11 release package from guest VM to
 mkdir -p "$PROJECT_ROOT/dist"
 
 # Download release package using powershell base64 or vagrant winrm
-vagrant winrm -e -c 'powershell -ExecutionPolicy Bypass -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes(\"C:\vagrant\dist\ec2pass-v0.1.0-windows-x86_64.zip\"))"' win11 | tr -d '\r\n' | base64 --decode > "$PROJECT_ROOT/dist/ec2pass-v0.1.0-windows-x86_64.zip"
-vagrant winrm -e -c 'powershell -ExecutionPolicy Bypass -Command "Get-Content C:\vagrant\dist\ec2pass-v0.1.0-windows-x86_64.zip.sha256"' win11 > "$PROJECT_ROOT/dist/ec2pass-v0.1.0-windows-x86_64.zip.sha256"
+vagrant winrm -e -c 'powershell -ExecutionPolicy Bypass -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes(\"C:\vagrant\dist\ec2pass-0.1.1-windows-x86_64.zip\"))"' win11 | tr -d '\r\n' | base64 --decode > "$PROJECT_ROOT/dist/ec2pass-0.1.1-windows-x86_64.zip"
+vagrant winrm -e -c 'powershell -ExecutionPolicy Bypass -Command "Get-Content C:\vagrant\dist\ec2pass-0.1.1-windows-x86_64.zip.sha256"' win11 > "$PROJECT_ROOT/dist/ec2pass-0.1.1-windows-x86_64.zip.sha256"
 
 echo -e "\n${GREEN}================================================================${NC}"
 echo -e "${GREEN}  SUCCESS: Windows 11 build, E2E tests, and release packaging PASSED!${NC}"

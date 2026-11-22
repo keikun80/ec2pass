@@ -76,24 +76,24 @@ The repository includes automated packaging scripts in `packaging/`:
 ### macOS Universal 2 Binary Package
 Builds both `x86_64-apple-darwin` and `aarch64-apple-darwin` targets and bundles them using `lipo`:
 ```bash
-./packaging/macos/build_macos_packages.sh v0.1.1
+./packaging/macos/build_macos_packages.sh 0.1.1
 ```
 This generates:
-- `dist/ec2pass-v0.1.1-darwin-universal.tar.gz` containing `ec2pass`, `ec2passd`, documentation, and `packaging/macos/install.sh`.
+- `dist/ec2pass-0.1.1-darwin-universal.tar.gz` containing `ec2pass`, `ec2passd`, documentation, and `packaging/macos/install.sh`.
 
 ### Linux Release Package
 On a Linux host (or inside the Vagrant AL2023 environment):
 ```bash
-bash packaging/build_release.sh v0.1.1
+bash packaging/build_release.sh 0.1.1
 ```
-This generates `dist/ec2pass-v0.1.1-linux-x86_64.tar.gz`.
+This generates `dist/ec2pass-0.1.1-linux-x86_64.tar.gz`.
 
 ### Windows Release Package
 On a Windows host (PowerShell):
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1 -version "v0.1.1"
+powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1 -version "0.1.1"
 ```
-This generates `dist\ec2pass-v0.1.1-windows-x86_64.zip`.
+This generates `dist\ec2pass-0.1.1-windows-x86_64.zip`.
 
 ---
 
@@ -103,11 +103,11 @@ This repository includes a fully automated release pipeline in [`.github/workflo
 
 When you push a version tag to GitHub:
 ```bash
-# 1. Create a release tag
-git tag v0.1.1
+# 1. Create a release tag (without 'v' prefix)
+git tag 0.1.1
 
 # 2. Push the tag to GitHub
-git push origin v0.1.1
+git push origin 0.1.1
 ```
 
 GitHub Actions will automatically:

@@ -41,7 +41,7 @@ file target/universal/ec2pass target/universal/ec2passd
 package_target() {
     local ARCH="$1"
     local BIN_DIR="$2"
-    local PKG_NAME="ec2pass-v${VERSION}-darwin-${ARCH}"
+    local PKG_NAME="ec2pass-${VERSION}-darwin-${ARCH}"
     local STAGE="${DIST_DIR}/${PKG_NAME}"
     local ARCHIVE="${DIST_DIR}/${PKG_NAME}.tar.gz"
 
@@ -78,5 +78,5 @@ package_target "x86_64" "target/x86_64-apple-darwin/release"
 
 echo -e "\n${BLUE}================================================================${NC}"
 echo -e "${GREEN}All macOS release packages successfully created in ${DIST_DIR}/:${NC}"
-ls -lh ${DIST_DIR}/ec2pass-v${VERSION}-darwin-*.tar.gz
+ls -lh ${DIST_DIR}/ec2pass-${VERSION}-darwin-*.tar.gz
 echo -e "${BLUE}================================================================${NC}"

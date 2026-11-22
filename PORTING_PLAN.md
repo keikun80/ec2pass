@@ -209,7 +209,7 @@ fn set_strict_key_permissions(_path: &std::path::Path) -> Result<()> {
 | **M3: macOS HVF Backend** | HVF accelerator, aarch64 EDK2 UEFI firmware, ARM64 CDN images | Native AL2023 boot on Apple Silicon (M1~M4) | **COMPLETED** |
 | **M4: PTY Terminal Passthrough** | Host OpenSSH client integration for interactive sessions | Full interactive terminal support (`vim`, `htop`, resize) | **COMPLETED** |
 | **M5: Daemon & Packaging** | Systemd unit, Launchd plist, macOS Universal 2 binary packaging | Multi-platform production release bundles | **COMPLETED** |
-| **M6: Live Download Progress** | Real-time terminal progress bar, percentage, and size display | Smooth user experience during initial AWS CDN image pull | **COMPLETED** (v0.1.1) |
-| **M7: Catalog & Alias Sanitation** | Clean `find` table output; auto-fallback aliases (`al2023-k6.12`, etc.) | Elimination of phantom images and 403 Forbidden errors | **COMPLETED** (v0.1.1) |
-| **M8: Hypervisor Resilience** | QMP reconnect loop backoff; unaccelerated software TCG fallback | Zero dropped commands during rapid state transitions | **COMPLETED** (v0.1.1) |
-| **M9: Multi-Platform Test Matrix**| 38-combination matrix tests across macOS, Linux, and Windows | 100% pass verification across all three operating systems | **COMPLETED** (v0.1.1) |
+| **M6: Live Download Progress** | Real-time terminal progress bar, percentage, and size display | Smooth user experience during initial AWS CDN image pull | **COMPLETED** (0.1.1) |
+| **M7: Catalog & Alias Sanitation** | Clean `find` table output; auto-fallback aliases (`al2023-k6.12`, etc.) | Elimination of phantom images and 403 Forbidden errors | **COMPLETED** (0.1.1) |
+| **M8: Hypervisor Resilience** | QMP reconnect loop backoff; unaccelerated software TCG fallback | Zero dropped commands during rapid state transitions | **COMPLETED** (0.1.1) |
+| **M9: Multi-Platform Test Matrix**| 38-combination matrix tests across macOS, Linux, and Windows | 100% pass verification across all three operating systems | **COMPLETED** (0.1.1) |
