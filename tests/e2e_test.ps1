@@ -45,7 +45,7 @@ try {
     # Test 4: Launch instance
     $testVm = "e2e-win-$(Get-Random)"
     Write-Host -NoNewline "[4/7] Launching test instance '$testVm'... "
-    & $bin launch al2023 -n $testVm --cpus 1 --memory 1G --disk 5G | Out-Null
+    & $bin launch al2023 -n $testVm --cpus 1 --memory 1G --disk 25G | Out-Null
     Write-Host "PASSED" -ForegroundColor Green
 
     # Test 5: Verify list and info

@@ -127,7 +127,7 @@ impl QemuDriver {
             "-display".to_string(),
             "none".to_string(),
             "-serial".to_string(),
-            "null".to_string(),
+            format!("file:{}/console.log", rec.instance_dir.to_string_lossy()),
             "-monitor".to_string(),
             "none".to_string(),
             // QMP Control Socket for lifecycle management
@@ -194,19 +194,25 @@ impl super::VirtualMachineDriver for QemuDriver {
             std::fs::create_dir_all(parent)?;
         }
 
-        let size_gib = (disk_bytes / (1024 * 1024 * 1024)).max(1);
-        let status = Command::new(&self.qemu_img_bin)
-            .args([
-                "create",
-                "-f",
-                "qcow2",
-                "-F",
-                "qcow2",
-                "-b",
-                &base_image.to_string_lossy(),
-                &overlay_path.to_string_lossy(),
-                &format!("{}G", size_gib),
-            ])
+        let mut cmd = Command::new(&self.qemu_img_bin);
+        cmd.args([
+            "create",
+            "-f",
+            "qcow2",
+            "-F",
+            "qcow2",
+            "-b",
+            &base_image.to_string_lossy(),
+            &overlay_path.to_string_lossy(),
+        ]);
+
+        // If the requested disk size exceeds the base image default (25 GiB), expand it
+        let size_gib = disk_bytes / (1024 * 1024 * 1024);
+        if size_gib > 25 {
+            cmd.arg(format!("{}G", size_gib));
+        }
+
+        let status = cmd
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
@@ -242,6 +248,22 @@ impl super::VirtualMachineDriver for QemuDriver {
         } else {
             let _ = self.send_qmp_command(rec.qmp_port, "system_powerdown").await;
         }
+
+        // Wait for the QEMU process to cleanly exit and release disk locks (up to 5 seconds)
+        let qmp_addr = format!("127.0.0.1:{}", rec.qmp_port);
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(5) {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            if tokio::net::TcpStream::connect(&qmp_addr).await.is_err() {
+                // Ensure OS file lock is completely released
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                return Ok(());
+            }
+        }
+
+        // If still running after 5s, force quit via QMP
+        let _ = self.send_qmp_command(rec.qmp_port, "quit").await;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         Ok(())
     }
 
@@ -254,14 +276,17 @@ impl super::VirtualMachineDriver for QemuDriver {
     }
 
     async fn take_disk_snapshot(&self, disk_path: &Path, snapshot_name: &str) -> Result<()> {
-        let status = Command::new(&self.qemu_img_bin)
-            .args(["snapshot", "-c", snapshot_name, &disk_path.to_string_lossy()])
-            .status()
-            .await?;
-        if !status.success() {
-            bail!("qemu-img snapshot -c failed for {:?}", disk_path);
+        for _ in 1..=6 {
+            let status = Command::new(&self.qemu_img_bin)
+                .args(["snapshot", "-c", snapshot_name, &disk_path.to_string_lossy()])
+                .status()
+                .await?;
+            if status.success() {
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-        Ok(())
+        bail!("qemu-img snapshot -c failed for {:?}", disk_path);
     }
 
     async fn restore_disk_snapshot(&self, disk_path: &Path, snapshot_name: &str) -> Result<()> {

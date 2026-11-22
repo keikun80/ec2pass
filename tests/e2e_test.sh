@@ -66,7 +66,7 @@ echo -e "${GREEN}PASSED${NC}"
 TEST_VM="e2e-ci-$(date +%s)"
 if command -v qemu-system-x86_64 >/dev/null 2>&1 || command -v qemu-system-aarch64 >/dev/null 2>&1; then
     echo -n "[4/7] Launching test instance '${TEST_VM}'... "
-    $BIN launch al2023 -n "$TEST_VM" --cpus 1 --memory 1G --disk 5G >/dev/null
+    $BIN launch al2023 -n "$TEST_VM" --cpus 1 --memory 1G --disk 25G >/dev/null
     echo -e "${GREEN}PASSED${NC}"
 
     # Test 5: Verify list and info
