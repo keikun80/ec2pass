@@ -9,6 +9,10 @@ BIN="${EC2PASS_BIN:-target/release/ec2pass}"
 REPORT_FILE="${REPORT_FILE:-/tmp/ec2pass_matrix_capture.md}"
 PLATFORM_NAME="${PLATFORM_NAME:-macOS Darwin (x86_64, HVF)}"
 
+if [ ! -e /dev/kvm ]; then
+    export EC2PASS_ALLOW_UNACCELERATED=1
+fi
+
 mkdir -p "$(dirname "$REPORT_FILE")"
 mkdir -p /tmp/matrix_share
 echo "ec2pass-matrix-shared-file-v1.0" > /tmp/matrix_share/shared_test.txt
