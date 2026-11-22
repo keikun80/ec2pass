@@ -51,10 +51,12 @@ echo -n "[1/7] Testing version command... "
 $BIN --version >/dev/null
 echo -e "${GREEN}PASSED${NC}"
 
-# Test 2: Find catalog check
-echo -n "[2/7] Testing find command... "
+# Test 2: Find catalog check (standard catalog and AWS CDN version listing)
+echo -n "[2/7] Testing find command and AWS CDN version listing... "
 $BIN find >/dev/null
 $BIN find minimal --format json >/dev/null
+$BIN find --show-versions >/dev/null
+$BIN find 2023.12 --show-versions --format json >/dev/null
 echo -e "${GREEN}PASSED${NC}"
 
 # Test 3: Networks list

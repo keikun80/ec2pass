@@ -17,6 +17,27 @@ use tokio::io::AsyncWriteExt;
 
 pub const AL2023_CDN_X86_64: &str = "https://cdn.amazonlinux.com/al2023/os-images/latest/kvm/";
 pub const AL2023_CDN_ARM64: &str = "https://cdn.amazonlinux.com/al2023/os-images/latest/kvm-arm64/";
+pub const AL2023_CDN_BASE: &str = "https://cdn.amazonlinux.com/al2023/os-images/";
+pub const AL2023_RELEASE_NOTES_RSS: &str =
+    "https://docs.aws.amazon.com/linux/al2023/release-notes/linux-release-notes.rss";
+
+/// Curated baseline list of known Amazon Linux 2023 release versions on AWS CDN
+pub const KNOWN_AL2023_VERSIONS: &[&str] = &[
+    "2023.12.20261120.0",
+    "2023.12.20261119.0",
+    "2023.12.20261118.0",
+    "2023.12.20261117.0",
+    "2023.12.20261112.0",
+    "2023.12.20261109.0",
+    "2023.12.20261102.0",
+    "2023.6.20250218.2",
+    "2023.5.20240916.0",
+    "2023.4.20240401.1",
+    "2023.3.20240131.0",
+    "2023.2.20231122.0",
+    "2023.1.20230912.0",
+    "2023.0.20230315.0",
+];
 
 pub struct ImageVault {
     cache_dir: PathBuf,
@@ -129,15 +150,150 @@ impl ImageVault {
         ]
     }
 
+    /// Discovers all available Amazon Linux 2023 release versions from the AWS CDN and official release feeds,
+    /// falling back to known curated releases when offline.
+    pub async fn fetch_available_versions(&self) -> Vec<String> {
+        let mut versions: Vec<String> = Vec::new();
+
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => {
+                return KNOWN_AL2023_VERSIONS.iter().map(|s| s.to_string()).collect();
+            }
+        };
+
+        let arch = Self::host_arch();
+        let cdn_url = if arch == "aarch64" {
+            AL2023_CDN_ARM64
+        } else {
+            AL2023_CDN_X86_64
+        };
+
+        // 1. Discover latest version from AWS CDN redirect or index HTML
+        if let Ok(resp) = client.get(cdn_url).send().await {
+            let final_url = resp.url().to_string();
+            let re_ver = Regex::new(r#"/os-images/([^/]+)/kvm"#).unwrap();
+            if let Some(caps) = re_ver.captures(&final_url) {
+                let ver = caps[1].to_string();
+                if ver != "latest" && !versions.contains(&ver) {
+                    versions.push(ver);
+                }
+            }
+            if let Ok(html) = resp.text().await {
+                let re_file = Regex::new(r#"al2023-kvm-([0-9.]+)-kernel"#).unwrap();
+                if let Some(caps) = re_file.captures(&html) {
+                    let ver = caps[1].to_string();
+                    if !versions.contains(&ver) {
+                        versions.push(ver);
+                    }
+                }
+            }
+        }
+
+        // 2. Discover recent releases from Amazon Linux 2023 Release Notes RSS
+        if let Ok(resp) = client.get(AL2023_RELEASE_NOTES_RSS).send().await {
+            if resp.status().is_success() {
+                if let Ok(rss_text) = resp.text().await {
+                    let re_rss = Regex::new(r#"<title>AL2023\s+([0-9.]+)\s+released</title>"#).unwrap();
+                    for cap in re_rss.captures_iter(&rss_text) {
+                        let mut ver = cap[1].to_string();
+                        let dot_count = ver.chars().filter(|c| *c == '.').count();
+                        if dot_count == 2 {
+                            ver.push_str(".0");
+                        }
+                        if !versions.contains(&ver) {
+                            versions.push(ver);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Merge known historical versions
+        for &known in KNOWN_AL2023_VERSIONS {
+            let k = known.to_string();
+            if !versions.contains(&k) {
+                versions.push(k);
+            }
+        }
+
+        versions
+    }
+
     /// Queries the live Amazon Linux 2023 CDN directory listing to discover the newest `.qcow2`
-    /// filename and `SHA256SUMS`, falling back gracefully to `builtin_catalog()` if offline.
-    pub async fn fetch_catalog(&self, force_refresh: bool) -> Vec<ImageCatalogEntry> {
+    /// filename and `SHA256SUMS`, optionally listing all available release versions.
+    pub async fn fetch_catalog_extended(
+        &self,
+        show_versions: bool,
+        force_refresh: bool,
+    ) -> Vec<ImageCatalogEntry> {
+        let arch = Self::host_arch();
+        let kvm_dir = if arch == "aarch64" {
+            "kvm-arm64"
+        } else {
+            "kvm"
+        };
+        let arch_suffix = if arch == "aarch64" {
+            "arm64"
+        } else {
+            "x86_64"
+        };
+
+        if show_versions {
+            let versions = self.fetch_available_versions().await;
+            let mut entries = Vec::with_capacity(versions.len());
+
+            for (idx, ver) in versions.iter().enumerate() {
+                let is_latest = idx == 0;
+                let aliases = if is_latest {
+                    vec![
+                        "al2023".to_string(),
+                        "2023".to_string(),
+                        "default".to_string(),
+                        "latest".to_string(),
+                        "lts".to_string(),
+                        format!("al2023:{}", ver),
+                        ver.clone(),
+                    ]
+                } else {
+                    vec![format!("al2023:{}", ver), ver.clone()]
+                };
+
+                let tag_prefix = if is_latest { "[latest] [default] " } else { "" };
+                let description = format!(
+                    "{}Amazon Linux 2023 KVM Cloud Image (Release {}) from AWS CDN",
+                    tag_prefix, ver
+                );
+
+                entries.push(ImageCatalogEntry {
+                    os: "Amazon Linux".to_string(),
+                    release: format!("Amazon Linux {}", ver),
+                    remote: "al2023".to_string(),
+                    version: format!("{} (Kernel 6.1)", ver),
+                    aliases,
+                    arch: arch.to_string(),
+                    download_url: format!(
+                        "{}{}/{}/al2023-kvm-{}-kernel-6.1-{}.xfs.gpt.qcow2",
+                        AL2023_CDN_BASE, ver, kvm_dir, ver, arch_suffix
+                    ),
+                    sha256: String::new(),
+                    size_bytes: 1_770_520_576,
+                    description,
+                });
+            }
+
+            return entries;
+        }
+
         let mut catalog = Self::builtin_catalog();
         if !force_refresh {
             return catalog;
         }
 
-        let arch = Self::host_arch();
         let cdn_url = if arch == "aarch64" {
             AL2023_CDN_ARM64
         } else {
@@ -190,14 +346,140 @@ impl ImageVault {
         catalog
     }
 
+    /// Fetches the standard catalog of images (default AL2023 LTS, Minimal, Kernel 6.12, AL2).
+    pub async fn fetch_catalog(&self, force_refresh: bool) -> Vec<ImageCatalogEntry> {
+        self.fetch_catalog_extended(false, force_refresh).await
+    }
+
+    /// Resolves a specific Amazon Linux 2023 release version directly against the AWS CDN.
+    pub async fn resolve_specific_version(&self, req_ver: &str) -> Result<ImageCatalogEntry> {
+        let arch = Self::host_arch();
+        let kvm_dir = if arch == "aarch64" {
+            "kvm-arm64"
+        } else {
+            "kvm"
+        };
+        let arch_suffix = if arch == "aarch64" {
+            "arm64"
+        } else {
+            "x86_64"
+        };
+
+        // Normalize version: if user specified e.g. "2023.12.20261119", try as-is and with ".0"
+        let candidate_versions = if req_ver.chars().filter(|c| *c == '.').count() == 2 {
+            vec![format!("{}.0", req_ver), req_ver.to_string()]
+        } else {
+            vec![req_ver.to_string()]
+        };
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .build()
+            .unwrap_or_default();
+
+        for candidate in &candidate_versions {
+            let sums_url = format!(
+                "{}{}/{}/SHA256SUMS",
+                AL2023_CDN_BASE, candidate, kvm_dir
+            );
+
+            if let Ok(resp) = client.get(&sums_url).send().await {
+                if resp.status().is_success() {
+                    if let Ok(sums_text) = resp.text().await {
+                        for line in sums_text.lines() {
+                            let mut parts = line.split_whitespace();
+                            if let (Some(hash), Some(fname)) = (parts.next(), parts.next()) {
+                                let clean_fname = fname.trim_start_matches('*');
+                                if clean_fname.ends_with(".qcow2") && clean_fname.contains(arch_suffix) {
+                                    let download_url = format!(
+                                        "{}{}/{}/{}",
+                                        AL2023_CDN_BASE, candidate, kvm_dir, clean_fname
+                                    );
+                                    return Ok(ImageCatalogEntry {
+                                        os: "Amazon Linux".to_string(),
+                                        release: format!("Amazon Linux {}", candidate),
+                                        remote: "al2023".to_string(),
+                                        version: format!("{} (Kernel 6.1)", candidate),
+                                        aliases: vec![
+                                            format!("al2023:{}", candidate),
+                                            candidate.clone(),
+                                        ],
+                                        arch: arch.to_string(),
+                                        download_url,
+                                        sha256: hash.to_lowercase(),
+                                        size_bytes: 1_770_520_576,
+                                        description: format!(
+                                            "Amazon Linux 2023 KVM Cloud Image release {} from AWS CDN",
+                                            candidate
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If offline or CDN unavailable, check if the candidate matches a built-in image
+        for entry in Self::builtin_catalog() {
+            if entry.version.contains(req_ver) || entry.aliases.iter().any(|a| a == req_ver) {
+                return Ok(entry);
+            }
+        }
+
+        // Offline fallback for known release versions
+        for candidate in &candidate_versions {
+            if KNOWN_AL2023_VERSIONS.contains(&candidate.as_str()) {
+                let filename = format!(
+                    "al2023-kvm-{}-kernel-6.1-{}.xfs.gpt.qcow2",
+                    candidate, arch_suffix
+                );
+                return Ok(ImageCatalogEntry {
+                    os: "Amazon Linux".to_string(),
+                    release: format!("Amazon Linux {}", candidate),
+                    remote: "al2023".to_string(),
+                    version: format!("{} (Kernel 6.1)", candidate),
+                    aliases: vec![format!("al2023:{}", candidate), candidate.clone()],
+                    arch: arch.to_string(),
+                    download_url: format!(
+                        "{}{}/{}/{}",
+                        AL2023_CDN_BASE, candidate, kvm_dir, filename
+                    ),
+                    sha256: String::new(),
+                    size_bytes: 1_770_520_576,
+                    description: format!(
+                        "Amazon Linux 2023 KVM Cloud Image release {} from AWS CDN",
+                        candidate
+                    ),
+                });
+            }
+        }
+
+        bail!(
+            "Amazon Linux 2023 version '{}' was not found on AWS CDN (checked {}). Run 'ec2pass find --show-versions' to list available releases.",
+            req_ver,
+            AL2023_CDN_BASE
+        )
+    }
+
     /// Resolves an image query (`None`, `"al2023"`, `"default"`, `"minimal"`, custom `http://...`
-    /// or `file://...` or local path) into an `ImageCatalogEntry`.
-    pub async fn resolve_image(&self, query: Option<&str>) -> Result<ImageCatalogEntry> {
+    /// or `file://...` or local path), optionally with an explicit version override,
+    /// into an `ImageCatalogEntry`.
+    pub async fn resolve_image_with_version(
+        &self,
+        query: Option<&str>,
+        version_override: Option<&str>,
+    ) -> Result<ImageCatalogEntry> {
         let q = query.unwrap_or("default").trim();
 
         // Check if query is a direct local file path or URL
         let local_path = Path::new(q);
-        if q.starts_with("http://") || q.starts_with("https://") || q.starts_with("file://") || local_path.exists() {
+        if q.starts_with("http://")
+            || q.starts_with("https://")
+            || q.starts_with("file://")
+            || local_path.exists()
+        {
             let mut hasher = Sha256::new();
             hasher.update(q.as_bytes());
             let hash = hex::encode(hasher.finalize());
@@ -215,6 +497,22 @@ impl ImageVault {
             });
         }
 
+        // Determine if a specific version was requested
+        let target_version = if let Some(ver) = version_override {
+            Some(ver.trim().to_string())
+        } else if let Some(ver) = q.strip_prefix("al2023:") {
+            Some(ver.trim().to_string())
+        } else if q.starts_with("2023.") && q.chars().filter(|c| *c == '.').count() >= 2 {
+            Some(q.trim().to_string())
+        } else {
+            None
+        };
+
+        if let Some(req_ver) = target_version {
+            return self.resolve_specific_version(&req_ver).await;
+        }
+
+        // Default resolution: dynamically resolve latest version from AWS CDN
         let catalog = self.fetch_catalog(true).await;
         let normalized = q.strip_prefix("al2023:").unwrap_or(q).to_lowercase();
 
@@ -238,6 +536,12 @@ impl ImageVault {
             "Unable to find an Amazon Linux image matching '{}'. Run 'ec2pass find' to list available images.",
             q
         )
+    }
+
+    /// Resolves an image query (`None`, `"al2023"`, `"default"`, `"minimal"`, custom `http://...`
+    /// or `file://...` or local path) into an `ImageCatalogEntry` using the latest version as default.
+    pub async fn resolve_image(&self, query: Option<&str>) -> Result<ImageCatalogEntry> {
+        self.resolve_image_with_version(query, None).await
     }
 
     /// Ensures the base `.qcow2` image exists in the local vault cache.
@@ -377,6 +681,47 @@ mod tests {
 
         let custom = vault.resolve_image(Some("https://example.com/custom.qcow2")).await.unwrap();
         assert_eq!(custom.remote, "custom");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_available_versions_and_catalog() {
+        let tmp = std::env::temp_dir().join(format!("ec2ps_vault_test_{}", rand::random::<u32>()));
+        let vault = ImageVault::new(tmp.clone()).unwrap();
+
+        let versions = vault.fetch_available_versions().await;
+        assert!(!versions.is_empty(), "Should discover AL2023 versions");
+        // Verify default version is latest
+        assert!(versions[0].starts_with("2023."));
+
+        // Test extended catalog with versions
+        let catalog = vault.fetch_catalog_extended(true, false).await;
+        assert!(!catalog.is_empty());
+        assert!(catalog[0].description.contains("[latest]"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_specific_version() {
+        let tmp = std::env::temp_dir().join(format!("ec2ps_vault_test_{}", rand::random::<u32>()));
+        let vault = ImageVault::new(tmp.clone()).unwrap();
+
+        // Test resolve with version override
+        let entry = vault
+            .resolve_image_with_version(Some("al2023"), Some("2023.12.20261119.0"))
+            .await
+            .unwrap();
+        assert!(entry.version.contains("2023.12.20261119.0"));
+        assert!(entry.download_url.contains("2023.12.20261119.0"));
+
+        // Test resolve with al2023:<version> syntax
+        let entry2 = vault
+            .resolve_image(Some("al2023:2023.6.20250218.2"))
+            .await
+            .unwrap();
+        assert!(entry2.version.contains("2023.6.20250218.2"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

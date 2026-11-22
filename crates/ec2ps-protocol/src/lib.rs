@@ -185,6 +185,8 @@ pub enum RpcRequest {
     },
     Launch {
         image: Option<String>,
+        #[serde(default)]
+        image_version: Option<String>,
         name: Option<String>,
         cpus: u32,
         memory_bytes: u64,
@@ -234,6 +236,8 @@ pub enum RpcRequest {
     Find {
         search_string: Option<String>,
         show_unsupported: bool,
+        #[serde(default)]
+        show_versions: bool,
         force_update: bool,
     },
     Exec {

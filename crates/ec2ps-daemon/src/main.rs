@@ -220,13 +220,15 @@ async fn dispatch_request(
         RpcRequest::Find {
             search_string,
             show_unsupported: _,
+            show_versions,
             force_update,
         } => {
-            let mut entries = ctx.vault.fetch_catalog(force_update).await;
+            let mut entries = ctx.vault.fetch_catalog_extended(show_versions, force_update).await;
             if let Some(q) = search_string {
                 let q_low = q.to_lowercase();
                 entries.retain(|e| {
                     e.release.to_lowercase().contains(&q_low)
+                        || e.version.to_lowercase().contains(&q_low)
                         || e.description.to_lowercase().contains(&q_low)
                         || e.aliases.iter().any(|a| a.to_lowercase().contains(&q_low))
                 });
@@ -236,6 +238,7 @@ async fn dispatch_request(
 
         RpcRequest::Launch {
             image,
+            image_version,
             name,
             cpus,
             memory_bytes,
@@ -271,7 +274,10 @@ async fn dispatch_request(
             };
 
             // 2. Resolve Amazon Linux 2023 image from ImageVault
-            let catalog_entry = ctx.vault.resolve_image(image.as_deref()).await?;
+            let catalog_entry = ctx
+                .vault
+                .resolve_image_with_version(image.as_deref(), image_version.as_deref())
+                .await?;
             send_progress(
                 writer,
                 "Retrieving image",

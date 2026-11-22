@@ -52,6 +52,10 @@ enum Commands {
         /// Image to launch (e.g. al2023, 2023, default, minimal, kernel-6.12, al2, or custom URL/path)
         image: Option<String>,
 
+        /// Specific Amazon Linux 2023 release version from AWS CDN (e.g. 2023.12.20261119.0). Defaults to latest.
+        #[arg(short = 'V', long = "image-version", visible_alias = "ver")]
+        image_version: Option<String>,
+
         /// Name for the instance (auto-generates a petname if omitted)
         #[arg(short, long)]
         name: Option<String>,
@@ -197,6 +201,10 @@ enum Commands {
     Find {
         /// Optional query string to filter images
         search_string: Option<String>,
+
+        /// Show all available Amazon Linux 2023 release versions from AWS CDN
+        #[arg(short = 'V', long = "show-versions", visible_alias = "all-versions")]
+        show_versions: bool,
 
         /// Show unsupported cloud images as well
         #[arg(long)]
@@ -429,6 +437,7 @@ async fn run_cli() -> Result<()> {
 
         Commands::Find {
             search_string,
+            show_versions,
             show_unsupported,
             force_update,
             format,
@@ -438,6 +447,7 @@ async fn run_cli() -> Result<()> {
                 RpcRequest::Find {
                     search_string,
                     show_unsupported,
+                    show_versions,
                     force_update,
                 },
                 true,
@@ -450,6 +460,7 @@ async fn run_cli() -> Result<()> {
 
         Commands::Launch {
             image,
+            image_version,
             name,
             cpus,
             memory,
@@ -494,6 +505,7 @@ async fn run_cli() -> Result<()> {
                 addr,
                 RpcRequest::Launch {
                     image,
+                    image_version,
                     name,
                     cpus,
                     memory_bytes,
@@ -643,6 +655,7 @@ async fn run_cli() -> Result<()> {
                         addr,
                         RpcRequest::Launch {
                             image: Some("al2023".to_string()),
+                            image_version: None,
                             name: Some(target.clone()),
                             cpus: 1,
                             memory_bytes: 1024 * 1024 * 1024,
