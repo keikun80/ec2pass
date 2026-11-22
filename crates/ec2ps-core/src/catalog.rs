@@ -62,10 +62,10 @@ impl ImageVault {
     /// Returns the built-in official Amazon Linux 2023 catalog entries.
     pub fn builtin_catalog() -> Vec<ImageCatalogEntry> {
         let arch = Self::host_arch();
-        let (cdn_base, arch_suffix, kvm_dir) = if arch == "aarch64" {
-            (AL2023_CDN_ARM64, "arm64", "kvm-arm64")
+        let (cdn_base, arch_suffix) = if arch == "aarch64" {
+            (AL2023_CDN_ARM64, "arm64")
         } else {
-            (AL2023_CDN_X86_64, "x86_64", "kvm")
+            (AL2023_CDN_X86_64, "x86_64")
         };
 
         vec![
@@ -97,46 +97,6 @@ impl ImageVault {
             },
             ImageCatalogEntry {
                 os: "Amazon Linux".to_string(),
-                release: "Amazon Linux 2023.6 (Kernel 6.12)".to_string(),
-                remote: "al2023".to_string(),
-                version: "2023.6.20250218.2 (Kernel 6.12)".to_string(),
-                aliases: vec![
-                    "al2023-k6.12".to_string(),
-                    "kernel-6.12".to_string(),
-                    "next".to_string(),
-                ],
-                arch: arch.to_string(),
-                download_url: format!(
-                    "{}al2023-kvm-2023.6.20250218.2-kernel-6.12-{}.xfs.gpt.qcow2",
-                    cdn_base, arch_suffix
-                ),
-                sha256: "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4"
-                    .to_string(),
-                size_bytes: 552_599_552,
-                description: "Amazon Linux 2023 KVM Cloud Image with HWE Kernel 6.12".to_string(),
-            },
-            ImageCatalogEntry {
-                os: "Amazon Linux".to_string(),
-                release: "Amazon Linux 2023 Minimal".to_string(),
-                remote: "al2023".to_string(),
-                version: "2023.6.20250218.2-minimal".to_string(),
-                aliases: vec![
-                    "al2023-minimal".to_string(),
-                    "minimal".to_string(),
-                    "micro".to_string(),
-                ],
-                arch: arch.to_string(),
-                download_url: format!(
-                    "{}2023.6.20250218.2/{}/al2023-kvm-2023.6.20250218.2-kernel-6.1-{}.xfs.gpt.qcow2",
-                    AL2023_CDN_BASE, kvm_dir, arch_suffix
-                ),
-                sha256: "1a7bc6c8f13650ea5adbfe88c59ee500db079a7d93d6868fcaf313a951480acb"
-                    .to_string(),
-                size_bytes: 340_787_200,
-                description: "Amazon Linux 2023 Minimal KVM Image (Stripped footprint, dnf-micro)".to_string(),
-            },
-            ImageCatalogEntry {
-                os: "Amazon Linux".to_string(),
                 release: "Amazon Linux 2 LTS".to_string(),
                 remote: "al2".to_string(),
                 version: "2.0.20250220.0".to_string(),
@@ -145,7 +105,7 @@ impl ImageVault {
                 download_url: "https://cdn.amazonlinux.com/os-images/2.0.20250220.0/kvm/amzn2-kvm-2.0.20250220.0-x86_64.xfs.gpt.qcow2".to_string(),
                 sha256: "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
                     .to_string(),
-                size_bytes: 512_000_000,
+                size_bytes: 1_377_304_576,
                 description: "Amazon Linux 2 LTS KVM Image (Legacy EC2 compatibility)".to_string(),
             },
         ]
@@ -517,8 +477,16 @@ impl ImageVault {
         let catalog = self.fetch_catalog(true).await;
         let normalized = q.strip_prefix("al2023:").unwrap_or(q).to_lowercase();
 
-        // Compatibility: if user passes "ubuntu" or "lts" out of habit, map to AL2023 default LTS
-        let search_key = if normalized == "ubuntu" || normalized.is_empty() {
+        // Compatibility: if user passes aliases like "ubuntu", "lts", "al2023-k6.12", "minimal", map to AL2023 default LTS
+        let search_key = if normalized == "ubuntu"
+            || normalized.is_empty()
+            || normalized == "al2023-k6.12"
+            || normalized == "kernel-6.12"
+            || normalized == "next"
+            || normalized == "al2023-minimal"
+            || normalized == "minimal"
+            || normalized == "micro"
+        {
             "default"
         } else {
             normalized.as_str()
@@ -597,6 +565,16 @@ impl ImageVault {
             .with_context(|| format!("Failed to connect to CDN: {}", entry.download_url))?;
 
         if !resp.status().is_success() {
+            if resp.status() == reqwest::StatusCode::FORBIDDEN
+                || resp.status() == reqwest::StatusCode::NOT_FOUND
+            {
+                bail!(
+                    "CDN returned HTTP {} for '{}'. This image or release version does not exist on AWS CDN. \
+                    Run 'ec2pass find --show-versions' to list available releases.",
+                    resp.status(),
+                    entry.download_url
+                );
+            }
             bail!(
                 "CDN returned HTTP {} for {}",
                 resp.status(),
@@ -706,7 +684,10 @@ mod tests {
         assert!(entry.release.contains("Amazon Linux"));
 
         let minimal = vault.resolve_image(Some("minimal")).await.unwrap();
-        assert!(minimal.release.contains("Minimal") || minimal.aliases.contains(&"minimal".to_string()));
+        assert!(minimal.release.contains("Amazon Linux"));
+
+        let k612 = vault.resolve_image(Some("al2023-k6.12")).await.unwrap();
+        assert!(k612.release.contains("Amazon Linux"));
 
         let custom = vault.resolve_image(Some("https://example.com/custom.qcow2")).await.unwrap();
         assert_eq!(custom.remote, "custom");

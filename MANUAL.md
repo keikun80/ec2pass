@@ -51,7 +51,7 @@ Creates a CoW QCOW2 overlay disk and NoCloud `seed.iso` from an Amazon Linux 202
 ec2pass launch [IMAGE] [OPTIONS]
 ```
 * **Options**:
-  * `[IMAGE]`: Image alias (default: `al2023` / `latest`). Supported: `al2023`, `al2023-k6.12`, `al2023-minimal`, `al2`, or a custom image path/URL.
+  * `[IMAGE]`: Image alias (default: `al2023` / `latest`). Supported: `al2023` (or specific version like `al2023:<version>`), `al2`, `al2023-k6.12`, `minimal`, or a custom image path/URL.
   * `-n, --name <NAME>`: Instance name (auto-generates petnames such as `bouncy-lynx` if omitted).
   * `-c, --cpus <COUNT>`: Number of vCPUs to allocate (default: `1`).
   * `-m, --memory <SIZE>`: Memory size (default: `1G`, e.g., `512M`, `2G`, `4GiB`).
