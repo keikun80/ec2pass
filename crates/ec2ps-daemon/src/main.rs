@@ -349,14 +349,36 @@ where
                     "Retrieving image: {} ({})",
                     catalog_entry.release, catalog_entry.version
                 ),
-                Some(10),
+                None,
             )
             .await?;
 
-            let base_image_path = ctx
-                .vault
-                .ensure_base_image(&catalog_entry, |_msg, _pct| {})
-                .await?;
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, Option<u8>)>();
+            let vault = ctx.vault.clone();
+            let entry_clone = catalog_entry.clone();
+
+            let download_task = async move {
+                vault
+                    .ensure_base_image(&entry_clone, move |msg, pct| {
+                        let _ = tx.send((msg.to_string(), pct));
+                    })
+                    .await
+            };
+            tokio::pin!(download_task);
+
+            let base_image_path = loop {
+                tokio::select! {
+                    Some((msg, pct)) = rx.recv() => {
+                        send_progress(writer, "Retrieving image", &msg, pct).await?;
+                    }
+                    res = &mut download_task => {
+                        while let Ok((msg, pct)) = rx.try_recv() {
+                            send_progress(writer, "Retrieving image", &msg, pct).await?;
+                        }
+                        break res?;
+                    }
+                }
+            };
 
             // 3. Prepare instance directory, CoW qcow2 overlay disk, and pure-Rust seed.iso (cidata)
             let instance_dir = ctx.data_dir.join("instances").join(&instance_name);

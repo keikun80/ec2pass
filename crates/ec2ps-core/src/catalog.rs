@@ -39,6 +39,7 @@ pub const KNOWN_AL2023_VERSIONS: &[&str] = &[
     "2023.0.20230315.0",
 ];
 
+#[derive(Clone)]
 pub struct ImageVault {
     cache_dir: PathBuf,
 }
@@ -61,10 +62,10 @@ impl ImageVault {
     /// Returns the built-in official Amazon Linux 2023 catalog entries.
     pub fn builtin_catalog() -> Vec<ImageCatalogEntry> {
         let arch = Self::host_arch();
-        let (cdn_base, arch_suffix) = if arch == "aarch64" {
-            (AL2023_CDN_ARM64, "arm64")
+        let (cdn_base, arch_suffix, kvm_dir) = if arch == "aarch64" {
+            (AL2023_CDN_ARM64, "arm64", "kvm-arm64")
         } else {
-            (AL2023_CDN_X86_64, "x86_64")
+            (AL2023_CDN_X86_64, "x86_64", "kvm")
         };
 
         vec![
@@ -126,10 +127,10 @@ impl ImageVault {
                 ],
                 arch: arch.to_string(),
                 download_url: format!(
-                    "{}al2023-kvm-2023.6.20250218.2-kernel-6.1-{}.xfs.gpt.qcow2",
-                    cdn_base, arch_suffix
+                    "{}2023.6.20250218.2/{}/al2023-kvm-2023.6.20250218.2-kernel-6.1-{}.xfs.gpt.qcow2",
+                    AL2023_CDN_BASE, kvm_dir, arch_suffix
                 ),
-                sha256: "c775e7b757ede630cd0aa1113bd102661ab38829ca52a6422ab782862f268646"
+                sha256: "1a7bc6c8f13650ea5adbfe88c59ee500db079a7d93d6868fcaf313a951480acb"
                     .to_string(),
                 size_bytes: 340_787_200,
                 description: "Amazon Linux 2023 Minimal KVM Image (Stripped footprint, dnf-micro)".to_string(),
@@ -556,7 +557,7 @@ impl ImageVault {
         // Local file path directly usable
         let direct_path = Path::new(&entry.download_url);
         if direct_path.exists() {
-            on_progress("Using local Amazon Linux 2023 image...", Some(100));
+            on_progress("Using local Amazon Linux 2023 image...", None);
             return Ok(direct_path.to_path_buf());
         }
 
@@ -574,7 +575,7 @@ impl ImageVault {
                 if meta.len() > 10_000_000 {
                     on_progress(
                         &format!("Found cached image '{}' in ImageVault", entry.release),
-                        Some(100),
+                        None,
                     );
                     return Ok(target_path);
                 }
@@ -585,7 +586,7 @@ impl ImageVault {
         // Real network download from Amazon Linux 2023 CDN
         on_progress(
             &format!("Downloading {} from {}", entry.release, entry.download_url),
-            Some(0),
+            None,
         );
 
         let client = reqwest::Client::new();
@@ -611,6 +612,17 @@ impl ImageVault {
         let mut last_pct: u8 = 0;
         let mut hasher = Sha256::new();
 
+        if total_size > 0 {
+            on_progress(
+                &format!(
+                    "Downloading {} (0B / {})",
+                    entry.release,
+                    ec2ps_protocol::format_bytes(total_size)
+                ),
+                Some(0),
+            );
+        }
+
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             hasher.update(&chunk);
@@ -618,17 +630,33 @@ impl ImageVault {
             downloaded += chunk.len() as u64;
             if total_size > 0 {
                 let pct = ((downloaded as f64 / total_size as f64) * 100.0).min(100.0) as u8;
-                if pct >= last_pct + 5 || pct == 100 {
+                if pct > last_pct || (downloaded == total_size && pct == 100) {
                     last_pct = pct;
                     on_progress(
-                        &format!("Downloading {}...", entry.release),
+                        &format!(
+                            "Downloading {} ({} / {})",
+                            entry.release,
+                            ec2ps_protocol::format_bytes(downloaded),
+                            ec2ps_protocol::format_bytes(total_size)
+                        ),
                         Some(pct),
                     );
                 }
+            } else {
+                on_progress(
+                    &format!(
+                        "Downloading {} ({})",
+                        entry.release,
+                        ec2ps_protocol::format_bytes(downloaded)
+                    ),
+                    None,
+                );
             }
         }
         file.flush().await?;
         drop(file);
+
+        on_progress("Download complete. Verifying SHA256 checksum...", Some(100));
 
         let computed_hash = hex::encode(hasher.finalize());
         let expected_hash = entry.sha256.trim().to_lowercase();
@@ -643,6 +671,7 @@ impl ImageVault {
                 );
             }
             tracing::info!("SHA256 verified successfully: {}", computed_hash);
+            on_progress("SHA256 verified successfully.", Some(100));
         }
 
         fs::rename(&tmp_path, &target_path).await?;

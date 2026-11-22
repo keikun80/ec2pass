@@ -19,8 +19,7 @@ pub const DEFAULT_UNIX_SOCKET: &str = "/var/run/ec2pass.sock";
 
 /// Returns the platform-appropriate default IPC daemon address:
 /// - Windows: Native Named Pipe (`\\.\pipe\ec2pass`)
-/// - Unix (Linux/macOS): Unix Domain Socket (`unix:/var/run/ec2pass.sock` or `unix:$XDG_RUNTIME_DIR/ec2pass.sock`)
-/// - Fallback: TCP Loopback (`127.0.0.1:50051`)
+/// - Unix / Default: TCP Loopback (`127.0.0.1:50051`)
 pub fn default_daemon_address() -> String {
     if let Ok(custom) = std::env::var("EC2PASS_DAEMON_ADDR")
         .or_else(|_| std::env::var("MP_DAEMON_ADDR"))
@@ -32,14 +31,7 @@ pub fn default_daemon_address() -> String {
     {
         DEFAULT_WINDOWS_NAMED_PIPE.to_string()
     }
-    #[cfg(unix)]
-    {
-        if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-            return format!("unix:{}/ec2pass.sock", runtime_dir);
-        }
-        DEFAULT_UNIX_SOCKET.to_string()
-    }
-    #[cfg(not(any(windows, unix)))]
+    #[cfg(not(windows))]
     {
         DEFAULT_TCP_ADDR.to_string()
     }
@@ -408,6 +400,24 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// Renders an ASCII progress bar of specified inner width with percentage filling:
+/// e.g. `[===========>      ]`
+pub fn render_progress_bar(percent: u8, width: usize) -> String {
+    let pct = (percent as usize).min(100);
+    let filled = (pct * width) / 100;
+    let bar_fill = "=".repeat(filled.saturating_sub(1));
+    let head = if filled > 0 && pct < 100 {
+        ">"
+    } else if pct == 100 {
+        "="
+    } else {
+        ""
+    };
+    let empty = width.saturating_sub(bar_fill.len() + head.len());
+    let bar_empty = " ".repeat(empty);
+    format!("[{}{}{}]", bar_fill, head, bar_empty)
+}
+
 // ============================================================================
 // Output Formatters (Table / JSON / YAML / CSV)
 // ============================================================================
@@ -757,6 +767,16 @@ mod tests {
     fn test_format_bytes() {
         assert_eq!(format_bytes(1024 * 1024), "1.0MiB");
         assert_eq!(format_bytes(2 * 1024 * 1024 * 1024), "2.0GiB");
+    }
+
+    #[test]
+    fn test_render_progress_bar() {
+        let bar0 = render_progress_bar(0, 10);
+        assert_eq!(bar0, "[          ]");
+        let bar50 = render_progress_bar(50, 10);
+        assert_eq!(bar50, "[====>     ]");
+        let bar100 = render_progress_bar(100, 10);
+        assert_eq!(bar100, "[==========]");
     }
 
     #[test]

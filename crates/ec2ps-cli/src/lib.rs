@@ -12,9 +12,9 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use ec2ps_protocol::{
     format_catalog_find, format_instance_info, format_instance_list, parse_byte_size,
-    render_ascii_table, OutputFormat, RpcRequest, RpcResponse, RpcStreamFrame,
+    render_ascii_table, render_progress_bar, OutputFormat, RpcRequest, RpcResponse, RpcStreamFrame,
 };
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -1114,6 +1114,9 @@ where
     writer.write_all(payload.as_bytes()).await?;
     writer.flush().await?;
 
+    let is_terminal = io::stderr().is_terminal();
+    let mut last_was_inline = false;
+
     let mut lines = BufReader::new(reader).lines();
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
@@ -1122,23 +1125,53 @@ where
         let frame: RpcStreamFrame = serde_json::from_str(&line)?;
         match frame {
             RpcStreamFrame::Progress {
-                phase: _,
+                phase,
                 message,
                 percent,
             } => {
                 if show_progress {
-                    if let Some(pct) = percent {
-                        eprintln!("[{:>3}%] {}", pct, message);
+                    if phase == "Retrieving image" {
+                        if let Some(pct) = percent {
+                            let bar = render_progress_bar(pct, 20);
+                            if is_terminal {
+                                eprint!("\r\x1b[2K[Retrieving image] {} {:>3}%  {}", bar, pct, message);
+                                let _ = io::stderr().flush();
+                                last_was_inline = true;
+                            } else {
+                                eprintln!("[{:>3}%] [Retrieving image] {} {}", pct, bar, message);
+                                let _ = io::stderr().flush();
+                            }
+                        } else {
+                            if last_was_inline {
+                                eprintln!();
+                                last_was_inline = false;
+                            }
+                            eprintln!("[Retrieving image] {}", message);
+                            let _ = io::stderr().flush();
+                        }
                     } else {
-                        eprintln!("{}", message);
+                        if last_was_inline {
+                            eprintln!();
+                            last_was_inline = false;
+                        }
+                        if let Some(pct) = percent {
+                            eprintln!("[{:>3}%] {}", pct, message);
+                        } else {
+                            eprintln!("{}", message);
+                        }
+                        let _ = io::stderr().flush();
                     }
-                    let _ = io::stderr().flush();
                 }
             }
-            RpcStreamFrame::Response(resp) => match resp {
-                RpcResponse::Error(err_msg) => bail!("{}", err_msg),
-                other => return Ok(other),
-            },
+            RpcStreamFrame::Response(resp) => {
+                if last_was_inline {
+                    eprintln!();
+                }
+                match resp {
+                    RpcResponse::Error(err_msg) => bail!("{}", err_msg),
+                    other => return Ok(other),
+                }
+            }
         }
     }
 
