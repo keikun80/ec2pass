@@ -28,7 +28,7 @@ echo -e "Detected Vagrant: ${GREEN}$(vagrant --version)${NC}"
 
 # 2. Boot Vagrant VM
 echo -e "\n${YELLOW}[1/4] Booting Vagrant VM (Amazon Linux 2023)...${NC}"
-vagrant up --provider virtualbox
+vagrant up al2023 --provider virtualbox
 
 # 3. Upload source code to guest VM via vagrant upload
 echo -e "\n${YELLOW}[2/4] Packaging and uploading source code to guest VM...${NC}"
@@ -36,21 +36,21 @@ TEMP_TAR="/tmp/ec2pass_src.tar.gz"
 rm -f "$TEMP_TAR"
 
 tar --exclude "target" --exclude "dist" --exclude ".git" --exclude ".vagrant" -czf "$TEMP_TAR" .
-vagrant upload "$TEMP_TAR" "/tmp/ec2pass_src.tar.gz"
+vagrant upload "$TEMP_TAR" "/tmp/ec2pass_src.tar.gz" al2023
 rm -f "$TEMP_TAR"
 
-vagrant ssh -c "sudo mkdir -p /vagrant && sudo chown -R vagrant:vagrant /vagrant && tar -xzf /tmp/ec2pass_src.tar.gz -C /vagrant && rm -f /tmp/ec2pass_src.tar.gz"
+vagrant ssh al2023 -c "sudo mkdir -p /vagrant && sudo chown -R vagrant:vagrant /vagrant && tar -xzf /tmp/ec2pass_src.tar.gz -C /vagrant && rm -f /tmp/ec2pass_src.tar.gz"
 echo -e "  ${GREEN}✓ Source code uploaded and unpacked to /vagrant in guest VM.${NC}"
 
 # 4. Execute Build, Test & Packaging inside guest VM
 echo -e "\n${YELLOW}[3/4] Running build, E2E tests, and release packaging inside Linux VM...${NC}"
-vagrant ssh -c "bash /vagrant/packaging/vagrant/build_and_test.sh"
+vagrant ssh al2023 -c "bash /vagrant/packaging/vagrant/build_and_test.sh"
 
 # 5. Retrieve Linux release artifacts from guest VM
 echo -e "\n${YELLOW}[4/4] Retrieving Linux release package from guest VM to host dist/...${NC}"
 mkdir -p "$PROJECT_ROOT/dist"
-SSH_KEY="$(vagrant ssh-config | grep IdentityFile | awk '{print $2}')"
-SSH_PORT="$(vagrant ssh-config | grep Port | awk '{print $2}')"
+SSH_KEY="$(vagrant ssh-config al2023 | grep IdentityFile | awk '{print $2}')"
+SSH_PORT="$(vagrant ssh-config al2023 | grep Port | awk '{print $2}')"
 scp -i "$SSH_KEY" -P "$SSH_PORT" -o StrictHostKeyChecking=no 'vagrant@127.0.0.1:/vagrant/dist/ec2pass-*-linux-*.tar.gz*' "$PROJECT_ROOT/dist/"
 
 echo -e "\n${GREEN}================================================================${NC}"

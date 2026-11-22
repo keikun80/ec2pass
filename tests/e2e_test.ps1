@@ -32,9 +32,11 @@ try {
     Write-Host "PASSED" -ForegroundColor Green
 
     # Test 2: Find catalog check
-    Write-Host -NoNewline "[2/7] Testing find command... "
+    Write-Host -NoNewline "[2/7] Testing find command and AWS CDN version listing... "
     & $bin find | Out-Null
     & $bin find minimal --format json | Out-Null
+    & $bin find --show-versions | Out-Null
+    & $bin find 2023.12 --show-versions --format json | Out-Null
     Write-Host "PASSED" -ForegroundColor Green
 
     # Test 3: Networks list
