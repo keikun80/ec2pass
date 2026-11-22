@@ -12,7 +12,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use ec2ps_protocol::{
     format_catalog_find, format_instance_info, format_instance_list, parse_byte_size,
-    render_ascii_table, OutputFormat, RpcRequest, RpcResponse, RpcStreamFrame, DEFAULT_DAEMON_ADDR,
+    render_ascii_table, OutputFormat, RpcRequest, RpcResponse, RpcStreamFrame,
 };
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -29,13 +29,13 @@ use tokio::net::TcpStream;
 struct Cli {
     /// Daemon RPC endpoint address
     #[arg(
-        long,
+        long = "daemon-addr",
+        alias = "daemon-address",
         global = true,
         env = "EC2PASS_DAEMON_ADDR",
-        default_value = DEFAULT_DAEMON_ADDR,
         hide = true
     )]
-    daemon_addr: String,
+    daemon_addr: Option<String>,
 
     /// Verbosity level (-v, -vv, -vvv)
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
@@ -337,8 +337,11 @@ enum Commands {
 
     /// Set, to the given value, the configuration setting corresponding to the given key
     Set {
-        /// Key-value pair in <key>=<value> format (e.g. local.my-vm.cpus=4)
-        keyval: String,
+        /// Setting key or key=value pair (e.g. local.driver=qemu)
+        key: String,
+
+        /// Optional value if key and value are passed as separate arguments
+        value: Option<String>,
     },
 
     /// Create an alias to be executed on a given instance
@@ -401,7 +404,8 @@ pub async fn entry_main() {
 
 async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
-    let addr = &cli.daemon_addr;
+    let default_addr = ec2ps_protocol::default_daemon_address();
+    let addr = cli.daemon_addr.as_deref().unwrap_or(&default_addr);
 
     match cli.command {
         Commands::Version { format } => {
@@ -860,10 +864,14 @@ async fn run_cli() -> Result<()> {
             }
         }
 
-        Commands::Set { keyval } => {
-            let (k, v) = keyval
-                .split_once('=')
-                .context("Setting must be specified in <key>=<value> format")?;
+        Commands::Set { key, value } => {
+            let (k, v) = if let Some(val) = value {
+                (key, val)
+            } else if let Some((k, v)) = key.split_once('=') {
+                (k.to_string(), v.to_string())
+            } else {
+                bail!("Invalid format. Use <key>=<value> or <key> <value>");
+            };
             send_rpc(
                 addr,
                 RpcRequest::Set {
@@ -990,8 +998,8 @@ async fn run_cli() -> Result<()> {
     Ok(())
 }
 
-/// Connects to `ec2passd` over TCP. If the daemon is not yet running, automatically spawns `ec2passd`
-/// in the background and waits for it to accept connections.
+/// Connects to `ec2passd` over TCP or Windows Named Pipe. If the daemon is not yet running,
+/// automatically spawns `ec2passd` in the background and waits for it to accept connections.
 async fn connect_or_spawn_daemon(addr: &str) -> Result<TcpStream> {
     if let Ok(stream) = TcpStream::connect(addr).await {
         return Ok(stream);
@@ -1019,7 +1027,7 @@ async fn connect_or_spawn_daemon(addr: &str) -> Result<TcpStream> {
                     .stderr(std::process::Stdio::null())
                     .spawn();
 
-                for _ in 0..30 {
+                for _ in 0..50 {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     if let Ok(stream) = TcpStream::connect(addr).await {
                         return Ok(stream);
@@ -1035,9 +1043,71 @@ async fn connect_or_spawn_daemon(addr: &str) -> Result<TcpStream> {
     )
 }
 
+#[cfg(windows)]
+async fn connect_or_spawn_pipe_daemon(
+    pipe_name: &str,
+) -> Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+    use tokio::net::windows::named_pipe::ClientOptions;
+
+    // Fast check if daemon is already running
+    if let Ok(client) = ClientOptions::new().open(pipe_name) {
+        return Ok(client);
+    }
+
+    // Attempt to spawn daemon
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(bin_dir) = current_exe.parent() {
+            let daemon_path = bin_dir.join("ec2passd.exe");
+            if daemon_path.exists() {
+                let _ = std::process::Command::new(&daemon_path)
+                    .arg("--address")
+                    .arg(pipe_name)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+
+                for _ in 0..50 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    if let Ok(client) = ClientOptions::new().open(pipe_name) {
+                        return Ok(client);
+                    }
+                }
+            }
+        }
+    }
+
+    bail!(
+        "Cannot connect to ec2passd daemon at {}. Start the daemon with `ec2passd`.",
+        pipe_name
+    )
+}
+
 async fn send_rpc(addr: &str, req: RpcRequest, show_progress: bool) -> Result<RpcResponse> {
+    if addr.starts_with(r"\\.\pipe\") || addr.starts_with("npipe:") {
+        #[cfg(windows)]
+        {
+            let pipe_name = if addr.starts_with("npipe:") {
+                addr.trim_start_matches("npipe:")
+            } else {
+                addr
+            };
+            let stream = connect_or_spawn_pipe_daemon(pipe_name).await?;
+            return send_rpc_stream(stream, req, show_progress).await;
+        }
+        #[cfg(not(windows))]
+        bail!("Named pipes are only supported on Windows");
+    }
+
     let stream = connect_or_spawn_daemon(addr).await?;
-    let (reader, mut writer) = stream.into_split();
+    send_rpc_stream(stream, req, show_progress).await
+}
+
+async fn send_rpc_stream<S>(stream: S, req: RpcRequest, show_progress: bool) -> Result<RpcResponse>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let (reader, mut writer) = tokio::io::split(stream);
 
     let mut payload = serde_json::to_string(&req)?;
     payload.push('\n');

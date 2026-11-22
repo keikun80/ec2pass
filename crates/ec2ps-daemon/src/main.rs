@@ -19,13 +19,13 @@ use ec2ps_core::ssh::{copy_dir_recursive, SshManager};
 use ec2ps_core::state::{InstanceRecord, StateStore};
 use ec2ps_protocol::{
     CommandAlias, InstanceDetails, InstanceState, MountSpec, NetworkInterfaceInfo, RpcRequest,
-    RpcResponse, RpcStreamFrame, DEFAULT_DAEMON_ADDR,
+    RpcResponse, RpcStreamFrame,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
 #[derive(Parser, Debug)]
@@ -34,9 +34,9 @@ use tokio::sync::Mutex;
     about = "InhausLab ec2pass Daemon - Virtual Machine Daemon for Amazon Linux 2023"
 )]
 struct DaemonArgs {
-    /// Address to bind the daemon RPC server
-    #[arg(long, env = "EC2PASS_DAEMON_ADDR", default_value = DEFAULT_DAEMON_ADDR)]
-    address: String,
+    /// Address to bind the daemon RPC server (Windows named pipe or TCP host:port)
+    #[arg(long, env = "EC2PASS_DAEMON_ADDR")]
+    address: Option<String>,
 
     /// Data storage directory for images, instances, keys, and state
     #[arg(long, env = "EC2PASS_HOME")]
@@ -81,10 +81,12 @@ async fn main() -> Result<()> {
         }
     };
 
+    let bind_addr = args.address.unwrap_or_else(ec2ps_protocol::default_daemon_address);
+
     tracing::info!(
         "ec2passd (InhausLab ec2pass Daemon v{}) listening on {} [driver: {}, data_dir: {:?}]",
         env!("CARGO_PKG_VERSION"),
-        args.address,
+        bind_addr,
         driver.driver_name(),
         data_dir
     );
@@ -97,11 +99,61 @@ async fn main() -> Result<()> {
         driver,
     });
 
-    let listener = TcpListener::bind(&args.address)
-        .await
-        .with_context(|| format!("Failed to bind daemon socket on {}", args.address))?;
+    if bind_addr.starts_with(r"\\.\pipe\") || bind_addr.starts_with("npipe:") {
+        #[cfg(windows)]
+        {
+            use tokio::net::windows::named_pipe::ServerOptions;
+            let pipe_name = if bind_addr.starts_with("npipe:") {
+                bind_addr.trim_start_matches("npipe:")
+            } else {
+                &bind_addr
+            };
 
-    tracing::info!("ec2passd daemon is ready to accept client connections");
+            let mut server = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(pipe_name)
+                .with_context(|| format!("Failed to create named pipe {}", pipe_name))?;
+
+            tracing::info!("ec2passd daemon is ready to accept client connections via Named Pipe {}", pipe_name);
+
+            loop {
+                tokio::select! {
+                    connect_res = server.connect() => {
+                        match connect_res {
+                            Ok(()) => {
+                                let connected_client = server;
+                                server = ServerOptions::new().create(pipe_name)?;
+                                let ctx_clone = Arc::clone(&ctx);
+                                tokio::spawn(async move {
+                                    if let Err(err) = handle_client(connected_client, ctx_clone).await {
+                                        tracing::warn!("Named pipe client session error: {:#}", err);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                tracing::warn!("Named pipe connect error: {:#}", e);
+                            }
+                        }
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        tracing::info!("Received shutdown signal (Ctrl+C). Saving state and exiting gracefully...");
+                        let store = ctx.store.lock().await;
+                        let _ = store.save();
+                        break;
+                    }
+                }
+            }
+            return Ok(());
+        }
+        #[cfg(not(windows))]
+        bail!("Named pipes are only supported on Windows");
+    }
+
+    let listener = TcpListener::bind(&bind_addr)
+        .await
+        .with_context(|| format!("Failed to bind daemon socket on {}", bind_addr))?;
+
+    tracing::info!("ec2passd daemon is ready to accept client connections via TCP {}", bind_addr);
 
     loop {
         tokio::select! {
@@ -132,7 +184,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn send_frame(writer: &mut tokio::net::tcp::OwnedWriteHalf, frame: &RpcStreamFrame) -> Result<()> {
+async fn send_frame<W>(writer: &mut W, frame: &RpcStreamFrame) -> Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
     let mut line = serde_json::to_string(frame)?;
     line.push('\n');
     writer.write_all(line.as_bytes()).await?;
@@ -140,12 +195,15 @@ async fn send_frame(writer: &mut tokio::net::tcp::OwnedWriteHalf, frame: &RpcStr
     Ok(())
 }
 
-async fn send_progress(
-    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+async fn send_progress<W>(
+    writer: &mut W,
     phase: &str,
     message: &str,
     percent: Option<u8>,
-) -> Result<()> {
+) -> Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
     send_frame(
         writer,
         &RpcStreamFrame::Progress {
@@ -157,8 +215,11 @@ async fn send_progress(
     .await
 }
 
-async fn handle_client(socket: TcpStream, ctx: Arc<DaemonContext>) -> Result<()> {
-    let (reader, mut writer) = socket.into_split();
+async fn handle_client<S>(socket: S, ctx: Arc<DaemonContext>) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let (reader, mut writer) = tokio::io::split(socket);
     let mut lines = BufReader::new(reader).lines();
 
     while let Some(line) = lines.next_line().await? {
@@ -190,11 +251,14 @@ async fn handle_client(socket: TcpStream, ctx: Arc<DaemonContext>) -> Result<()>
     Ok(())
 }
 
-async fn dispatch_request(
+async fn dispatch_request<W>(
     req: RpcRequest,
     ctx: &Arc<DaemonContext>,
-    writer: &mut tokio::net::tcp::OwnedWriteHalf,
-) -> Result<RpcResponse> {
+    writer: &mut W,
+) -> Result<RpcResponse>
+where
+    W: AsyncWriteExt + Unpin,
+{
     match req {
         RpcRequest::Ping => Ok(RpcResponse::Pong),
 

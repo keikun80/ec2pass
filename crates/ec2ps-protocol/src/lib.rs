@@ -7,11 +7,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Default local TCP port for the `ec2passd` daemon IPC server.
-pub const DEFAULT_DAEMON_ADDR: &str = "127.0.0.1:50051";
+/// Default local TCP port for the `ec2passd` daemon IPC server (when TCP is used).
+pub const DEFAULT_TCP_ADDR: &str = "127.0.0.1:50051";
+pub const DEFAULT_DAEMON_ADDR: &str = DEFAULT_TCP_ADDR;
+
+/// Default Windows Named Pipe path for daemon IPC (native OS IPC, zero network access required).
+pub const DEFAULT_WINDOWS_NAMED_PIPE: &str = r"\\.\pipe\ec2pass";
+
+/// Default Unix Domain Socket path for daemon IPC.
+pub const DEFAULT_UNIX_SOCKET: &str = "/var/run/ec2pass.sock";
 
 /// Returns the platform-appropriate default IPC daemon address:
+/// - Windows: Native Named Pipe (`\\.\pipe\ec2pass`)
 /// - Unix (Linux/macOS): Unix Domain Socket (`unix:/var/run/ec2pass.sock` or `unix:$XDG_RUNTIME_DIR/ec2pass.sock`)
-/// - Windows: TCP Loopback (`127.0.0.1:50051`)
+/// - Fallback: TCP Loopback (`127.0.0.1:50051`)
 pub fn default_daemon_address() -> String {
     if let Ok(custom) = std::env::var("EC2PASS_DAEMON_ADDR")
         .or_else(|_| std::env::var("MP_DAEMON_ADDR"))
@@ -19,16 +28,20 @@ pub fn default_daemon_address() -> String {
     {
         return custom;
     }
+    #[cfg(windows)]
+    {
+        DEFAULT_WINDOWS_NAMED_PIPE.to_string()
+    }
     #[cfg(unix)]
     {
         if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
             return format!("unix:{}/ec2pass.sock", runtime_dir);
         }
-        "unix:/var/run/ec2pass.sock".to_string()
+        DEFAULT_UNIX_SOCKET.to_string()
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(windows, unix)))]
     {
-        DEFAULT_DAEMON_ADDR.to_string()
+        DEFAULT_TCP_ADDR.to_string()
     }
 }
 
