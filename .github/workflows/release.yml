@@ -122,14 +122,32 @@ jobs:
           echo "=== Release Artifacts Staged for Upload ==="
           ls -lh release-artifacts/
 
+      - name: Ensure Clean Release Slot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          echo "Checking for any existing release for tag $TAG..."
+          REL_ID=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/releases/tags/$TAG" | jq -r '.id // empty')
+          if [ -n "$REL_ID" ]; then
+            echo "Deleting existing release ID $REL_ID for tag $TAG..."
+            curl -s -X DELETE \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPO/releases/$REL_ID"
+          fi
+
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: InhausLab ec2pass ${{ github.event.inputs.tag || github.ref_name }}
+          body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false
           files: |
             release-artifacts/*.tar.gz
             release-artifacts/*.zip
