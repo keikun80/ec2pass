@@ -49,9 +49,9 @@ impl ImageVault {
         vec![
             ImageCatalogEntry {
                 os: "Amazon Linux".to_string(),
-                release: "Amazon Linux 2023.6 LTS".to_string(),
+                release: "Amazon Linux 2023.12 LTS".to_string(),
                 remote: "al2023".to_string(),
-                version: "2023.6.20250218.2 (Kernel 6.1)".to_string(),
+                version: "2023.12.20261120.0 (Kernel 6.1)".to_string(),
                 aliases: vec![
                     "al2023".to_string(),
                     "2023".to_string(),
@@ -62,12 +62,15 @@ impl ImageVault {
                 ],
                 arch: arch.to_string(),
                 download_url: format!(
-                    "{}al2023-kvm-2023.6.20250218.2-kernel-6.1-{}.xfs.gpt.qcow2",
+                    "{}al2023-kvm-2023.12.20261120.0-kernel-6.1-{}.xfs.gpt.qcow2",
                     cdn_base, arch_suffix
                 ),
-                sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                    .to_string(),
-                size_bytes: 545_259_520,
+                sha256: if arch == "aarch64" {
+                    "6d7fb166db05e40dacb5fcf90b5e5184de1ce2bb5956bec694c6dbba70e7d11d".to_string()
+                } else {
+                    "be3240954918ce36bb293481eecdcb9a8943b5af2b4a74fd2b3dddf0cdb8a9af".to_string()
+                },
+                size_bytes: 1_770_520_576,
                 description: "Amazon Linux 2023 KVM Cloud Image (Kernel 6.1 LTS, XFS, GPT, SELinux enforcing)".to_string(),
             },
             ImageCatalogEntry {
@@ -212,7 +215,7 @@ impl ImageVault {
             });
         }
 
-        let catalog = self.fetch_catalog(false).await;
+        let catalog = self.fetch_catalog(true).await;
         let normalized = q.strip_prefix("al2023:").unwrap_or(q).to_lowercase();
 
         // Compatibility: if user passes "ubuntu" or "lts" out of habit, map to AL2023 default LTS
@@ -262,7 +265,9 @@ impl ImageVault {
 
         if target_path.exists() {
             if let Ok(meta) = fs::metadata(&target_path).await {
-                if meta.len() > 0 {
+                // Ensure the cached image is a full valid image (real AL2023 images are > 100MB)
+                // rather than an interrupted download or a 4KB stub.
+                if meta.len() > 10_000_000 {
                     on_progress(
                         &format!("Found cached image '{}' in ImageVault", entry.release),
                         Some(100),
