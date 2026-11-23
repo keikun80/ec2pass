@@ -4,9 +4,9 @@
 [CmdletBinding()]
 param(
     [string]$RepoUrl = "https://github.com/keikun80/ec2pass.git",
-    [string]$TagName = "0.1.2",
-    [string]$ReleaseTitle = "InhausLab ec2pass 0.1.2",
-    [string]$ReleaseNotes = "Official release 0.1.2 of InhausLab ec2pass (Amazon Linux 2023 EC2 VM manager for Windows x86_64)."
+    [string]$TagName = "0.1.3",
+    [string]$ReleaseTitle = "InhausLab ec2pass 0.1.3",
+    [string]$ReleaseNotes = "Official release 0.1.3 of InhausLab ec2pass (Amazon Linux 2023 EC2 VM manager for Windows x86_64)."
 )
 
 $ErrorActionPreference = "Continue"

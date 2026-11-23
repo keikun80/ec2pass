@@ -335,11 +335,13 @@ where
                 RpcRequest::Ping | RpcRequest::Version => {}
                 RpcRequest::Authenticate { passphrase } => {
                     let store = ctx.store.lock().await;
-                    let valid = if let Some(secret) = store.data.settings.get("local._passphrase_secret") {
-                        !secret.is_empty() && (secret == passphrase || &ctx.auth_token == passphrase)
-                    } else {
-                        &ctx.auth_token == passphrase
-                    };
+                    let valid =
+                        if let Some(secret) = store.data.settings.get("local._passphrase_secret") {
+                            !secret.is_empty()
+                                && (secret == passphrase || &ctx.auth_token == passphrase)
+                        } else {
+                            &ctx.auth_token == passphrase
+                        };
                     if valid {
                         session_authenticated = true;
                         send_frame(
@@ -748,7 +750,14 @@ where
                 let tag = format!("ec2ps_mount_{}", idx);
                 let _ = ctx
                     .ssh
-                    .sync_mount(&instance_dir, ssh_port, "ec2-user", &m.source_path, tgt, Some(&tag))
+                    .sync_mount(
+                        &instance_dir,
+                        ssh_port,
+                        "ec2-user",
+                        &m.source_path,
+                        tgt,
+                        Some(&tag),
+                    )
                     .await;
             }
 
@@ -836,7 +845,14 @@ where
                     let tag = format!("ec2ps_mount_{}", idx);
                     let _ = ctx
                         .ssh
-                        .sync_mount(&rec.instance_dir, rec.details.ssh_port, &rec.details.ssh_user, &m.source_path, tgt, Some(&tag))
+                        .sync_mount(
+                            &rec.instance_dir,
+                            rec.details.ssh_port,
+                            &rec.details.ssh_user,
+                            &m.source_path,
+                            tgt,
+                            Some(&tag),
+                        )
                         .await;
                 }
                 started.push(rec.details.clone());
@@ -876,10 +892,13 @@ where
                             let _ = tx.send(());
                         }
                         let (tx, rx) = tokio::sync::oneshot::channel();
-                        ctx.shutdown_cancellers.lock().await.insert(name.clone(), tx);
+                        ctx.shutdown_cancellers
+                            .lock()
+                            .await
+                            .insert(name.clone(), tx);
                         rec.details.state = InstanceState::DelayedShutdown;
 
-                        let ctx_bg = Arc::clone(&ctx);
+                        let ctx_bg = Arc::clone(ctx);
                         let name_bg = name.clone();
                         tokio::spawn(async move {
                             tokio::select! {
@@ -1203,7 +1222,14 @@ where
 
             if is_running {
                 ctx.ssh
-                    .sync_mount(&instance_dir, ssh_port, &ssh_user, &abs_src, &target_path, Some(&tag))
+                    .sync_mount(
+                        &instance_dir,
+                        ssh_port,
+                        &ssh_user,
+                        &abs_src,
+                        &target_path,
+                        Some(&tag),
+                    )
                     .await?;
             }
             Ok(RpcResponse::OkMessage("Mounted".to_string()))
@@ -1280,16 +1306,12 @@ where
                         // Instance-to-Instance transfer via temporary host staging
                         let (src_dir, src_port, src_user, dst_dir, dst_port, dst_user) = {
                             let store = ctx.store.lock().await;
-                            let s_rec = store
-                                .data
-                                .instances
-                                .get(src_inst)
-                                .with_context(|| format!("Source instance '{}' does not exist", src_inst))?;
-                            let d_rec = store
-                                .data
-                                .instances
-                                .get(dst_inst)
-                                .with_context(|| format!("Destination instance '{}' does not exist", dst_inst))?;
+                            let s_rec = store.data.instances.get(src_inst).with_context(|| {
+                                format!("Source instance '{}' does not exist", src_inst)
+                            })?;
+                            let d_rec = store.data.instances.get(dst_inst).with_context(|| {
+                                format!("Destination instance '{}' does not exist", dst_inst)
+                            })?;
                             (
                                 s_rec.instance_dir.clone(),
                                 s_rec.details.ssh_port,
@@ -1351,12 +1373,14 @@ where
                         // Guest-to-Host transfer
                         let (dir, port, user) = {
                             let store = ctx.store.lock().await;
-                            let rec = store
-                                .data
-                                .instances
-                                .get(src_inst)
-                                .with_context(|| format!("Source instance '{}' does not exist", src_inst))?;
-                            (rec.instance_dir.clone(), rec.details.ssh_port, rec.details.ssh_user.clone())
+                            let rec = store.data.instances.get(src_inst).with_context(|| {
+                                format!("Source instance '{}' does not exist", src_inst)
+                            })?;
+                            (
+                                rec.instance_dir.clone(),
+                                rec.details.ssh_port,
+                                rec.details.ssh_user.clone(),
+                            )
                         };
                         ctx.ssh
                             .transfer_path(&dir, port, &user, src, &destination, recursive, parents)
@@ -1366,12 +1390,14 @@ where
                         // Host-to-Guest transfer
                         let (dir, port, user) = {
                             let store = ctx.store.lock().await;
-                            let rec = store
-                                .data
-                                .instances
-                                .get(dst_inst)
-                                .with_context(|| format!("Destination instance '{}' does not exist", dst_inst))?;
-                            (rec.instance_dir.clone(), rec.details.ssh_port, rec.details.ssh_user.clone())
+                            let rec = store.data.instances.get(dst_inst).with_context(|| {
+                                format!("Destination instance '{}' does not exist", dst_inst)
+                            })?;
+                            (
+                                rec.instance_dir.clone(),
+                                rec.details.ssh_port,
+                                rec.details.ssh_user.clone(),
+                            )
                         };
                         ctx.ssh
                             .transfer_path(&dir, port, &user, src, &destination, recursive, parents)
@@ -1619,8 +1645,8 @@ where
                     );
                 }
 
-                let new_bytes = ec2ps_protocol::parse_byte_size(&value)
-                    .context("Invalid disk size format")?;
+                let new_bytes =
+                    ec2ps_protocol::parse_byte_size(&value).context("Invalid disk size format")?;
                 if new_bytes < current_bytes {
                     bail!(
                         "Disk size can only be increased (current: {}, requested: {})",
@@ -1867,7 +1893,8 @@ async fn detect_host_networks() -> Vec<NetworkInterfaceInfo> {
     networks.push(NetworkInterfaceInfo {
         name: "user-nat".to_string(),
         net_type: "user-nat".to_string(),
-        description: "ec2pass User-mode NAT Virtual Network (10.0.2.0/24 with SSH port-forwarding)".to_string(),
+        description: "ec2pass User-mode NAT Virtual Network (10.0.2.0/24 with SSH port-forwarding)"
+            .to_string(),
     });
 
     networks
@@ -1912,8 +1939,14 @@ mod tests {
 
     #[test]
     fn test_parse_endpoint() {
-        assert_eq!(parse_endpoint("inst1:/var/log"), Some(("inst1", "/var/log")));
-        assert_eq!(parse_endpoint("my-vm:test.txt"), Some(("my-vm", "test.txt")));
+        assert_eq!(
+            parse_endpoint("inst1:/var/log"),
+            Some(("inst1", "/var/log"))
+        );
+        assert_eq!(
+            parse_endpoint("my-vm:test.txt"),
+            Some(("my-vm", "test.txt"))
+        );
         assert_eq!(parse_endpoint("C:\\Users\\user\\file.txt"), None);
         assert_eq!(parse_endpoint("d:/data/file.txt"), None);
         assert_eq!(parse_endpoint("/local/path/to/file"), None);
@@ -1949,7 +1982,13 @@ mod tests {
         assert_eq!(default_targets, vec!["primary".to_string()]);
 
         // Explicit names override default
-        let explicit_targets = resolve_target_names(&store, &["vm1".to_string(), "vm2".to_string()], false, "primary").unwrap();
+        let explicit_targets = resolve_target_names(
+            &store,
+            &["vm1".to_string(), "vm2".to_string()],
+            false,
+            "primary",
+        )
+        .unwrap();
         assert_eq!(explicit_targets, vec!["vm1".to_string(), "vm2".to_string()]);
 
         // Custom primary setting

@@ -390,7 +390,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
-    fn dummy_instance_record(name: &str, dir: &Path, state: InstanceState, disk_bytes: u64) -> InstanceRecord {
+    fn dummy_instance_record(
+        name: &str,
+        dir: &Path,
+        state: InstanceState,
+        disk_bytes: u64,
+    ) -> InstanceRecord {
         let details = InstanceDetails {
             name: name.to_string(),
             state,
@@ -432,7 +437,12 @@ mod tests {
         let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
 
         let inst_name = "test-vm";
-        let rec = dummy_instance_record(inst_name, &tmp_dir, InstanceState::Stopped, 20 * 1024 * 1024 * 1024);
+        let rec = dummy_instance_record(
+            inst_name,
+            &tmp_dir,
+            InstanceState::Stopped,
+            20 * 1024 * 1024 * 1024,
+        );
         store.data.instances.insert(inst_name.to_string(), rec);
         store.save().unwrap();
 
@@ -446,13 +456,25 @@ mod tests {
         // Decrease: 30G -> 25G should fail
         let res = store.set_setting("local.test-vm.disk", "25G");
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("can only be increased"));
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("can only be increased"));
 
         // When running: resizing should fail
-        store.data.instances.get_mut(inst_name).unwrap().details.state = InstanceState::Running;
+        store
+            .data
+            .instances
+            .get_mut(inst_name)
+            .unwrap()
+            .details
+            .state = InstanceState::Running;
         let res_running = store.set_setting("local.test-vm.disk", "40G");
         assert!(res_running.is_err());
-        assert!(res_running.unwrap_err().to_string().contains("Please stop the instance first"));
+        assert!(res_running
+            .unwrap_err()
+            .to_string()
+            .contains("Please stop the instance first"));
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
@@ -464,19 +486,48 @@ mod tests {
         let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
 
         let inst_name = "mount-vm";
-        let rec = dummy_instance_record(inst_name, &tmp_dir, InstanceState::Stopped, 20 * 1024 * 1024 * 1024);
+        let rec = dummy_instance_record(
+            inst_name,
+            &tmp_dir,
+            InstanceState::Stopped,
+            20 * 1024 * 1024 * 1024,
+        );
         store.data.instances.insert(inst_name.to_string(), rec);
 
         // Add 2 mounts
-        store.add_mount(inst_name, "/host/dir1".to_string(), "/guest/mnt1".to_string(), Vec::new(), Vec::new(), "classic".to_string()).unwrap();
-        store.add_mount(inst_name, "/host/dir2".to_string(), "/guest/mnt2".to_string(), Vec::new(), Vec::new(), "classic".to_string()).unwrap();
+        store
+            .add_mount(
+                inst_name,
+                "/host/dir1".to_string(),
+                "/guest/mnt1".to_string(),
+                Vec::new(),
+                Vec::new(),
+                "classic".to_string(),
+            )
+            .unwrap();
+        store
+            .add_mount(
+                inst_name,
+                "/host/dir2".to_string(),
+                "/guest/mnt2".to_string(),
+                Vec::new(),
+                Vec::new(),
+                "classic".to_string(),
+            )
+            .unwrap();
         assert_eq!(store.data.instances[inst_name].details.mounts.len(), 2);
 
         // Remove single mount
         store.remove_mount(inst_name, Some("/guest/mnt1")).unwrap();
         assert_eq!(store.data.instances[inst_name].details.mounts.len(), 1);
-        assert!(!store.data.instances[inst_name].details.mounts.contains_key("/guest/mnt1"));
-        assert!(store.data.instances[inst_name].details.mounts.contains_key("/guest/mnt2"));
+        assert!(!store.data.instances[inst_name]
+            .details
+            .mounts
+            .contains_key("/guest/mnt1"));
+        assert!(store.data.instances[inst_name]
+            .details
+            .mounts
+            .contains_key("/guest/mnt2"));
 
         // Remove all mounts
         store.remove_mount(inst_name, None).unwrap();
@@ -487,27 +538,44 @@ mod tests {
 
     #[test]
     fn test_valid_and_invalid_settings() {
-        let tmp_dir =
-            std::env::temp_dir().join(format!("ec2ps_test_state_settings_{}", rand::random::<u32>()));
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "ec2ps_test_state_settings_{}",
+            rand::random::<u32>()
+        ));
         let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
 
         // Valid key
-        assert!(store.set_setting("client.primary-name", "my-primary").is_ok());
-        assert_eq!(store.data.settings.get("client.primary-name").unwrap(), "my-primary");
+        assert!(store
+            .set_setting("client.primary-name", "my-primary")
+            .is_ok());
+        assert_eq!(
+            store.data.settings.get("client.primary-name").unwrap(),
+            "my-primary"
+        );
 
         // Passphrase
         assert!(store.set_setting("local.passphrase", "secret123").is_ok());
         assert_eq!(store.data.settings.get("local.passphrase").unwrap(), "true");
-        assert_eq!(store.data.settings.get("local._passphrase_secret").unwrap(), "secret123");
+        assert_eq!(
+            store.data.settings.get("local._passphrase_secret").unwrap(),
+            "secret123"
+        );
 
         // Passphrase reset
         assert!(store.set_setting("local.passphrase", "").is_ok());
-        assert_eq!(store.data.settings.get("local.passphrase").unwrap(), "false");
+        assert_eq!(
+            store.data.settings.get("local.passphrase").unwrap(),
+            "false"
+        );
         assert!(!store.data.settings.contains_key("local._passphrase_secret"));
 
         // Invalid phantom keys should be rejected
-        assert!(store.set_setting("client.apps.windows-terminal.profiles", "foo").is_err());
-        assert!(store.set_setting("local.privileged-mounts", "true").is_err());
+        assert!(store
+            .set_setting("client.apps.windows-terminal.profiles", "foo")
+            .is_err());
+        assert!(store
+            .set_setting("local.privileged-mounts", "true")
+            .is_err());
         assert!(store.set_setting("unknown.key", "val").is_err());
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -515,8 +583,8 @@ mod tests {
 
     #[test]
     fn test_snapshot_create_and_restore_destructive() {
-        let tmp_dir = std::env::temp_dir()
-            .join(format!("ec2ps_test_state_snap_{}", rand::random::<u32>()));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_state_snap_{}", rand::random::<u32>()));
         let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
 
         let inst_name = "snap-vm";

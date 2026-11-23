@@ -351,7 +351,10 @@ impl SshManager {
                 "sudo modprobe 9pnet_virtio 2>/dev/null; sudo modprobe 9p 2>/dev/null; if ! mountpoint -q '{0}'; then sudo mount -t 9p -o trans=virtio,version=9p2000.L,access=any,msize=1048576 '{1}' '{0}' 2>/dev/null || true; fi; mountpoint -q '{0}'",
                 guest_target, tag
             )];
-            if let Ok((_out, _err, code)) = self.exec_command("instance", instance_dir, ssh_port, ssh_user, &mnt_cmd, None).await {
+            if let Ok((_out, _err, code)) = self
+                .exec_command("instance", instance_dir, ssh_port, ssh_user, &mnt_cmd, None)
+                .await
+            {
                 if code == 0 {
                     mounted_9p = true;
                 }

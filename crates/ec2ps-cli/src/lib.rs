@@ -782,35 +782,42 @@ async fn run_cli() -> Result<()> {
             let target = name.unwrap_or_else(|| primary_name.clone());
 
             // Check if instance exists; if not and it's default primary, auto-launch it
-            let shell_resp =
-                match send_rpc(addr, RpcRequest::ShellInfo { name: Some(target.clone()) }, false).await {
-                    Ok(r) => r,
-                    Err(_) if is_primary_target => {
-                        println!(
-                            "Launching primary instance '{}' with Amazon Linux 2023...",
-                            target
-                        );
-                        send_rpc(
-                            addr,
-                            RpcRequest::Launch {
-                                image: Some("al2023".to_string()),
-                                image_version: None,
-                                name: Some(target.clone()),
-                                cpus: 1,
-                                memory_bytes: 1024 * 1024 * 1024,
-                                disk_bytes: 5 * 1024 * 1024 * 1024,
-                                cloud_init_yaml: None,
-                                networks: vec![],
-                                mounts: vec![],
-                                timeout_secs: 300,
-                            },
-                            true,
-                        )
-                        .await?;
-                        send_rpc(addr, RpcRequest::ShellInfo { name: Some(target) }, false).await?
-                    }
-                    Err(e) => return Err(e),
-                };
+            let shell_resp = match send_rpc(
+                addr,
+                RpcRequest::ShellInfo {
+                    name: Some(target.clone()),
+                },
+                false,
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(_) if is_primary_target => {
+                    println!(
+                        "Launching primary instance '{}' with Amazon Linux 2023...",
+                        target
+                    );
+                    send_rpc(
+                        addr,
+                        RpcRequest::Launch {
+                            image: Some("al2023".to_string()),
+                            image_version: None,
+                            name: Some(target.clone()),
+                            cpus: 1,
+                            memory_bytes: 1024 * 1024 * 1024,
+                            disk_bytes: 5 * 1024 * 1024 * 1024,
+                            cloud_init_yaml: None,
+                            networks: vec![],
+                            mounts: vec![],
+                            timeout_secs: 300,
+                        },
+                        true,
+                    )
+                    .await?;
+                    send_rpc(addr, RpcRequest::ShellInfo { name: Some(target) }, false).await?
+                }
+                Err(e) => return Err(e),
+            };
 
             if let RpcResponse::ShellConnection {
                 instance: _,
@@ -1492,7 +1499,7 @@ fn resolve_mapped_working_directory(
 ) -> Option<String> {
     let mut best_match: Option<String> = None;
     let mut longest_prefix_len = 0;
-    for (_target, mount) in mounts {
+    for mount in mounts.values() {
         let host_path = std::path::Path::new(&mount.source_path);
         if let Ok(rel) = cwd.strip_prefix(host_path) {
             let match_len = host_path.as_os_str().len();

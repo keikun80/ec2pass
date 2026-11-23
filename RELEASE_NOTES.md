@@ -1,5 +1,90 @@
 # InhausLab ec2pass Release Notes
 
+## InhausLab ec2pass 0.1.3 Release Notes
+
+**Release Version**: `0.1.3`  
+**Release Date**: 2026-11-24  
+**Target Architecture**: macOS Darwin (x86_64 / Apple Silicon Universal 2), Linux (x86_64), Windows 11 (x86_64)
+
+---
+
+### Overview
+
+InhausLab `ec2pass` 0.1.3 delivers complete stub and sham elimination, true cross-platform hardening, and full implementation of all audited roadmap capabilities across Linux, macOS, and Windows. This release brings cross-platform process liveness verification, dynamic network interface discovery on macOS, official multi-distro cloud image catalog integration (Ubuntu 24.04, Debian 12, Rocky Linux 9, Fedora 40, AL2023 Minimal), multi-distro cloud-init sudoers/groups support, ARM64 UEFI edk2 firmware auto-discovery for QEMU, destructive snapshot rollback history pruning, host-to-guest working directory mapping for `ec2pass exec`, session token authentication, and Windows Hyper-V driver fixes.
+
+---
+
+### What's New in 0.1.3
+
+#### 1. Cross-Platform Process Liveness Verification
+* Replaced Linux-only `/proc/<pid>` checks with unified cross-platform process verification:
+  * **Unix / macOS**: Direct POSIX `libc::kill(pid, 0)` signaling to check for process existence and ownership.
+  * **Windows**: `tasklist.exe /FI "PID eq <pid>"` inspection with strict numeric PID matching.
+
+#### 2. Dynamic Host Network Discovery on macOS
+* Resolved macOS network interface detection limitation:
+  * Leveraged `ifconfig -l` to dynamically enumerate active physical (`en*`), bridge (`bridge*`), and tunnel (`utun*`) interfaces on Darwin, aligning with Linux `/sys/class/net` discovery.
+
+#### 3. Official Cloud Image Catalog & Multi-Distro Support
+* Added official GenericCloud/KVM image catalog entries and direct download endpoints:
+  * **Ubuntu 24.04 LTS (Noble Numbat)**
+  * **Debian 12 (Bookworm)**
+  * **Rocky Linux 9 (Enterprise Linux)**
+  * **Fedora 40 Cloud**
+  * **Amazon Linux 2023 Minimal**
+* Legacy/unsupported images are now cleanly filtered from default `ec2pass find` listings unless `--show-unsupported` is specified.
+* Normalized compatibility aliases (`al2023-k6.12`, `kernel-6.12`, `micro`, `minimal`) in the catalog.
+
+#### 4. Multi-Distribution Cloud-Init Sudoers & Groups Configuration
+* Updated default cloud-init `vendor-data` to configure `groups: [wheel, sudo, adm, systemd-journal]` with `0440` passwordless sudoers rules.
+* Guarantees passwordless `sudo` out of the box across both RHEL/Fedora-family (`wheel`) and Debian/Ubuntu-family (`sudo`) distributions.
+
+#### 5. ARM64 UEFI (edk2) Firmware Auto-Discovery for QEMU
+* Automated detection of ARM64 UEFI bios firmware files across standard system paths (`/opt/homebrew`, `/usr/local`, `/usr/share/qemu`, `/usr/share/edk2/aarch64`, etc.).
+* Automatically binds `-bios <edk2-aarch64-code.fd>` on Apple Silicon and Linux ARM64 systems, eliminating bootloader stalls.
+
+#### 6. Destructive Snapshot History Pruning (`--destructive`)
+* Full implementation of `ec2pass restore <instance> -s <snapshot> --destructive`:
+  * Non-destructive restore preserves subsequent snapshots.
+  * Destructive restore cleanly truncates snapshot branch history, pruning orphaned snapshots taken after the restored point.
+
+#### 7. Working Directory Mapping for Command Execution (`ec2pass exec`)
+* If the host's current working directory matches any mount on the instance, `ec2pass exec` automatically maps and executes the command within the corresponding guest path.
+* Added `-n` / `--no-map-working-directory` to disable automatic directory mapping.
+
+#### 8. Enhanced Security & Configuration Hygiene
+* Daemon RPC session authentication token stored in `~/.ec2pass/auth_token` (0600 file permissions).
+* Purged unhandled phantom settings keys, rejecting unrecognized configuration keys with descriptive errors.
+* Removed artificial `.max(180)` clamp on `--timeout` in instance launch.
+
+#### 9. Windows Hyper-V Native Driver Enhancements
+* PowerShell/WMI SCSI DVD drive attach for `seed.iso` cloud-init provisioning.
+* Accurate VM worker process (`vmwp.exe`) PID discovery via Hyper-V VM GUIDs.
+* Virtual network adapter configuration connected directly to the Hyper-V Default Switch.
+
+---
+
+### Upgrade Guide
+
+#### macOS (Homebrew / Direct Binary)
+```bash
+curl -fsSL https://github.com/keikun80/ec2pass/releases/download/0.1.3/ec2pass-0.1.3-macos-universal.tar.gz | tar -xz -C /usr/local/bin
+```
+
+#### Linux (Amazon Linux 2023 / Enterprise Linux 9 / Ubuntu)
+```bash
+curl -fsSL https://github.com/keikun80/ec2pass/releases/download/0.1.3/ec2pass-0.1.3-linux-x86_64.tar.gz | tar -xz -C /tmp
+sudo /tmp/ec2pass-0.1.3-linux-x86_64/install.sh
+```
+
+#### Windows 11 (PowerShell)
+```powershell
+Invoke-WebRequest -Uri https://github.com/keikun80/ec2pass/releases/download/0.1.3/ec2pass-0.1.3-windows-x86_64.zip -OutFile ec2pass.zip
+Expand-Archive -Path ec2pass.zip -DestinationPath $env:LOCALAPPDATA\Programs\ec2pass -Force
+```
+
+---
+
 ## InhausLab ec2pass 0.1.2 Release Notes
 
 **Release Version**: `0.1.2`  

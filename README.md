@@ -1,7 +1,7 @@
 # InhausLab ec2pass
 
 [![Rust](https://img.shields.io/badge/rust-2021_edition-orange.svg)](https://www.rust-lang.org/)
-[![Version: 0.1.2](https://img.shields.io/badge/version-0.1.2-green.svg)](RELEASE_NOTES.md)
+[![Version: 0.1.3](https://img.shields.io/badge/version-0.1.3-green.svg)](RELEASE_NOTES.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support)
 
