@@ -52,7 +52,7 @@ powershell -ExecutionPolicy Bypass -File ".\tests\e2e_test.ps1"
 
 # 5. Package Windows 11 Release Archive
 Write-Host "`n[Step 5/5] Creating Windows release ZIP archive in dist/..." -ForegroundColor Yellow
-$version = "0.1.1"
+$version = "0.1.2"
 $distDir = ".\dist"
 $stageName = "ec2pass-$version-windows-x86_64"
 $stageDir = Join-Path $distDir $stageName

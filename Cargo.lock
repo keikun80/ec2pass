@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "ec2ps-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "ec2ps-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "ec2ps-daemon"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -365,14 +365,14 @@ dependencies = [
 
 [[package]]
 name = "ec2ps-iso9660"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "ec2ps-protocol"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",

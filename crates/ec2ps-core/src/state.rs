@@ -226,9 +226,9 @@ impl StateStore {
             .get_mut(instance_name)
             .with_context(|| format!("No such instance: '{}'", instance_name))?;
 
-        if rec.details.state != InstanceState::Stopped {
+        if rec.details.state != InstanceState::Stopped && rec.details.state != InstanceState::Running {
             bail!(
-                "Snapshots can only be taken for stopped instances ('{}' is currently {}).",
+                "Snapshots can only be taken for stopped or running instances ('{}' is currently {}).",
                 instance_name,
                 rec.details.state
             );
@@ -267,9 +267,9 @@ impl StateStore {
             .get_mut(instance_name)
             .with_context(|| format!("No such instance: '{}'", instance_name))?;
 
-        if rec.details.state != InstanceState::Stopped {
+        if rec.details.state != InstanceState::Stopped && rec.details.state != InstanceState::Running {
             bail!(
-                "Snapshots can only be restored on stopped instances ('{}' is currently {}).",
+                "Snapshots can only be restored on stopped or running instances ('{}' is currently {}).",
                 instance_name,
                 rec.details.state
             );

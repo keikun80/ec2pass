@@ -45,6 +45,16 @@ pub trait VirtualMachineDriver: Send + Sync {
 
     /// Restores an internal disk snapshot.
     async fn restore_disk_snapshot(&self, disk_path: &Path, snapshot_name: &str) -> Result<()>;
+
+    /// Creates a live VM snapshot (memory + disk).
+    async fn take_live_snapshot(&self, _qmp_port: u16, disk_path: &Path, snapshot_name: &str) -> Result<()> {
+        self.take_disk_snapshot(disk_path, snapshot_name).await
+    }
+
+    /// Restores a live VM snapshot (memory + disk).
+    async fn restore_live_snapshot(&self, _qmp_port: u16, disk_path: &Path, snapshot_name: &str) -> Result<()> {
+        self.restore_disk_snapshot(disk_path, snapshot_name).await
+    }
 }
 
 /// Strictly checks that the platform's required hypervisor is installed and operational.

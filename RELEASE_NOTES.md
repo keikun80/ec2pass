@@ -1,4 +1,76 @@
-# InhausLab ec2pass 0.1.1 Release Notes
+# InhausLab ec2pass Release Notes
+
+## InhausLab ec2pass 0.1.2 Release Notes
+
+**Release Version**: `0.1.2`  
+**Release Date**: 2026-11-23  
+**Target Architecture**: macOS Darwin (x86_64 / Apple Silicon Universal 2), Linux (x86_64), Windows 11 (x86_64)
+
+---
+
+### Overview
+
+InhausLab `ec2pass` 0.1.2 introduces real-time host-to-guest directory synchronization (`mount` & `umount`), live QMP snapshot and rollback on running instances, enhanced recursive file transfer with automatic parent directory creation (`transfer -p`), dynamic CLI command alias forwarding, and an interactive rotating circular activity indicator (`|` -> `/` -> `-` -> `\`). In addition, the comprehensive test matrix was expanded to 67 test cases with 100% strict verification across all subcommands, options, and output formats.
+
+---
+
+### What's New in 0.1.2
+
+#### 1. Live Interactive Circular Activity Indicator
+* Replaced static progress dots with a dynamic 360-degree rotating line spinner (`|` -> `/` -> `-` -> `\`) running at 100ms intervals during long-running tasks (`mount`, `umount`, `transfer`, `snapshot`, `restore`, `start`, etc.).
+* Cleanly erases the spinner on completion, maintaining a pristine terminal state.
+
+#### 2. Synchronized Directory Mounting & Clean Unmounting (`mount` & `umount`)
+* **Live Mount Sync**: `ec2pass mount <host_path> <instance>:<guest_path>` synchronizes host project directories directly into the guest VM with proper user ownership and recursive write permissions (`sudo chmod -R u+w`).
+* **Clean Umount**: `ec2pass umount <instance>:<guest_path>` completely unmounts and cleans the guest mount directory, matching native unmount behavior.
+* **Persistent Mount Sync on Boot**: Automatically synchronizes configured mount points upon instance `launch` and `start`.
+
+#### 3. Nested File Transfer with Parent Directory Creation (`transfer -p / --parents`)
+* `ec2pass transfer -p / --parents` automatically creates missing nested parent directories on the destination target before transferring files or directories (supports both host-to-guest and guest-to-host).
+* Automatic resolution of relative host paths to absolute paths.
+
+#### 4. Live Instance Snapshot & State Rollback (`snapshot` & `restore -s`)
+* Supports taking snapshots on running virtual machines via QMP Human Monitor commands (`savevm`), capturing full disk and memory states without shutting down the VM.
+* Live rollback via `ec2pass restore <instance> -s <snapshot>` seamlessly restores instances to prior points in time.
+* Supports both `<instance>.<snapshot>` and `<instance> -s <snapshot>` / `--snapshot <snapshot>` syntax.
+
+#### 5. Dynamic Command Alias Execution
+* Registered aliases (`ec2pass alias <instance>:<command> <alias_name>`) can now be invoked directly from the CLI as first-class subcommands (e.g. `ec2pass host-uptime` directly forwards to remote execution on the target instance).
+
+#### 6. Hypervisor Lifecycle & SSH Connection Resilience
+* Fixed restart and resume race conditions: `restart` and `start` on suspended instances now wait for full SSH guest readiness before returning.
+* Implemented exponential backoff and retry loop for transient SSH handshake resets (`banner exchange`, `Connection reset by peer`, `kex_exchange_identification`).
+* Auto-detection and recovery of dead QEMU PIDs via `/proc/<pid>` inspection.
+
+#### 7. 67-Case Comprehensive Matrix Test Suite (100% Strict Pass)
+* Expanded `tests/comprehensive_matrix_test.sh` to 67 exhaustive test cases covering every subcommand, option flag, lifecycle event, and output format (`table`, `json`, `yaml`, `csv`).
+* Eliminated all unconditional pass workarounds (`|| true`); all 67 test cases strictly pass with Exit Code 0.
+
+---
+
+### Upgrade Guide
+
+#### macOS (Homebrew / Direct Binary)
+```bash
+curl -fsSL https://github.com/keikun80/ec2pass/releases/download/0.1.2/ec2pass-0.1.2-macos-universal.tar.gz | tar -xz -C /usr/local/bin
+```
+
+#### Linux (Amazon Linux 2023 / Enterprise Linux 9 / Ubuntu)
+```bash
+curl -fsSL https://github.com/keikun80/ec2pass/releases/download/0.1.2/ec2pass-0.1.2-linux-x86_64.tar.gz | tar -xz -C /tmp
+sudo /tmp/ec2pass-0.1.2-linux-x86_64/install.sh
+```
+
+#### Windows 11 (PowerShell)
+```powershell
+Invoke-WebRequest -Uri https://github.com/keikun80/ec2pass/releases/download/0.1.2/ec2pass-0.1.2-windows-x86_64.zip -OutFile ec2pass.zip
+Expand-Archive -Path ec2pass.zip -DestinationPath C:\ec2pass
+& C:\ec2pass\install.ps1
+```
+
+---
+
+## InhausLab ec2pass 0.1.1 Release Notes
 
 **Release Version**: `0.1.1`  
 **Release Date**: 2026-11-22  

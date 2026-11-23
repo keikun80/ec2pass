@@ -88,8 +88,8 @@ impl QemuDriver {
         }
     }
 
-    /// Sends a JSON QMP command (`system_powerdown`, `stop`, `cont`, `quit`) to the VM's QMP TCP socket.
-    pub async fn send_qmp_command(&self, qmp_port: u16, execute_cmd: &str) -> Result<()> {
+    /// Sends a raw QMP command payload, negotiates greeting/caps, and waits for `return` or `error` reply.
+    pub async fn send_qmp_execute(&self, qmp_port: u16, payload: &str) -> Result<String> {
         let addr = format!("127.0.0.1:{}", qmp_port);
         let mut stream = None;
         for i in 0..10 {
@@ -120,9 +120,35 @@ impl QemuDriver {
         let _cap_reply = lines.next_line().await?;
 
         // 3. Send actual command
-        let payload = format!("{{\"execute\":\"{}\"}}\r\n", execute_cmd);
         writer.write_all(payload.as_bytes()).await?;
-        let _cmd_reply = lines.next_line().await?;
+        writer.write_all(b"\r\n").await?;
+
+        // 4. Drain until a return or error response (ignoring asynchronous STOP/RESUME events)
+        while let Some(line) = lines.next_line().await? {
+            if line.contains("\"return\"") {
+                return Ok(line);
+            }
+            if line.contains("\"error\"") {
+                bail!("QMP command returned error: {}", line);
+            }
+        }
+        bail!("QMP connection closed unexpectedly");
+    }
+
+    /// Sends a Human Monitor command through QMP `human-monitor-command`.
+    pub async fn send_hmp_command(&self, qmp_port: u16, hmp_cmd: &str) -> Result<String> {
+        let escaped = hmp_cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        let payload = format!(
+            "{{\"execute\":\"human-monitor-command\",\"arguments\":{{\"command-line\":\"{}\"}}}}",
+            escaped
+        );
+        self.send_qmp_execute(qmp_port, &payload).await
+    }
+
+    /// Sends a JSON QMP command (`system_powerdown`, `stop`, `cont`, `quit`) to the VM's QMP TCP socket.
+    pub async fn send_qmp_command(&self, qmp_port: u16, execute_cmd: &str) -> Result<()> {
+        let payload = format!("{{\"execute\":\"{}\"}}", execute_cmd);
+        self.send_qmp_execute(qmp_port, &payload).await?;
         Ok(())
     }
 
@@ -311,5 +337,25 @@ impl super::VirtualMachineDriver for QemuDriver {
             bail!("qemu-img snapshot -a failed for {:?}", disk_path);
         }
         Ok(())
+    }
+
+    async fn take_live_snapshot(&self, qmp_port: u16, disk_path: &Path, snapshot_name: &str) -> Result<()> {
+        match self.send_hmp_command(qmp_port, &format!("savevm {}", snapshot_name)).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                tracing::warn!("QMP live snapshot failed ({:?}), falling back to offline disk snapshot", e);
+                self.take_disk_snapshot(disk_path, snapshot_name).await
+            }
+        }
+    }
+
+    async fn restore_live_snapshot(&self, qmp_port: u16, disk_path: &Path, snapshot_name: &str) -> Result<()> {
+        match self.send_hmp_command(qmp_port, &format!("loadvm {}", snapshot_name)).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                tracing::warn!("QMP live restore failed ({:?}), falling back to offline disk restore", e);
+                self.restore_disk_snapshot(disk_path, snapshot_name).await
+            }
+        }
     }
 }

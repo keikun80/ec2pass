@@ -68,7 +68,19 @@ async fn main() -> Result<()> {
         std::fs::create_dir_all(&data_dir)?;
     }
 
-    let store = StateStore::load_or_create(&data_dir)?;
+    let mut store = StateStore::load_or_create(&data_dir)?;
+    for (_name, rec) in store.data.instances.iter_mut() {
+        if rec.details.state == InstanceState::Running {
+            let is_alive = rec.pid.map_or(false, |p| {
+                std::path::Path::new(&format!("/proc/{}", p)).exists()
+            });
+            if !is_alive {
+                rec.details.state = InstanceState::Stopped;
+                rec.pid = None;
+            }
+        }
+    }
+    let _ = store.save();
     let vault = ImageVault::new(data_dir.join("cache").join("images"))?;
     let ssh = SshManager::new(data_dir.join("ssh-keys"))?;
     let preferred_driver = store.data.settings.get("local.driver").map(|s| s.as_str());
@@ -456,7 +468,7 @@ where
                 memory_total_bytes: memory_bytes,
                 disk_usage_bytes: std::fs::metadata(&disk_path).map(|m| m.len()).unwrap_or(0),
                 disk_total_bytes: disk_bytes,
-                mounts: mount_map,
+                mounts: mount_map.clone(),
                 ssh_port,
                 ssh_user: "ec2-user".to_string(),
                 ssh_key_path: ctx.ssh.private_key_path().to_string_lossy().to_string(),
@@ -571,6 +583,13 @@ where
             record.details.state = InstanceState::Running;
             let launched_details = record.details.clone();
 
+            for (tgt, m) in &mount_map {
+                let _ = ctx
+                    .ssh
+                    .sync_mount(&instance_dir, ssh_port, "ec2-user", &m.source_path, tgt)
+                    .await;
+            }
+
             {
                 let mut store = ctx.store.lock().await;
                 store.data.instances.insert(instance_name, record);
@@ -603,9 +622,16 @@ where
                 if rec.details.state == InstanceState::Deleted {
                     bail!("Cannot start deleted instance '{}'. Recover it first.", name);
                 }
+                let is_alive = rec.pid.map_or(false, |p| {
+                    std::path::Path::new(&format!("/proc/{}", p)).exists()
+                });
                 if rec.details.state == InstanceState::Suspended {
                     ctx.driver.resume_vm(rec).await?;
-                } else if rec.details.state != InstanceState::Running {
+                    let _ = ctx
+                        .ssh
+                        .wait_until_ready(&name, &rec.instance_dir, rec.details.ssh_port, &rec.details.ssh_user, 15)
+                        .await;
+                } else if rec.details.state != InstanceState::Running || !is_alive {
                     let pid = ctx.driver.start_vm(rec).await?;
                     rec.pid = Some(pid);
                     let _ = ctx
@@ -677,6 +703,10 @@ where
                 ctx.driver.stop_vm(rec, false).await?;
                 let pid = ctx.driver.start_vm(rec).await?;
                 rec.pid = Some(pid);
+                let _ = ctx
+                    .ssh
+                    .wait_until_ready(&name, &rec.instance_dir, rec.details.ssh_port, &rec.details.ssh_user, 60)
+                    .await;
                 rec.details.state = InstanceState::Running;
                 restarted.push(rec.details.clone());
             }
@@ -901,19 +931,34 @@ where
                 .trim_start_matches(r"\\?\")
                 .to_string();
 
-            let mut store = ctx.store.lock().await;
-            if !store.data.instances.contains_key(&instance) {
-                bail!("No such instance: '{}'", instance);
-            }
+            let (is_running, instance_dir, ssh_port, ssh_user) = {
+                let mut store = ctx.store.lock().await;
+                if !store.data.instances.contains_key(&instance) {
+                    bail!("No such instance: '{}'", instance);
+                }
 
-            store.add_mount(
-                &instance,
-                abs_src,
-                target_path,
-                uid_map,
-                gid_map,
-                mount_type,
-            )?;
+                store.add_mount(
+                    &instance,
+                    abs_src.clone(),
+                    target_path.clone(),
+                    uid_map,
+                    gid_map,
+                    mount_type,
+                )?;
+                let rec = &store.data.instances[&instance];
+                (
+                    rec.details.state == InstanceState::Running,
+                    rec.instance_dir.clone(),
+                    rec.details.ssh_port,
+                    rec.details.ssh_user.clone(),
+                )
+            };
+
+            if is_running {
+                ctx.ssh
+                    .sync_mount(&instance_dir, ssh_port, &ssh_user, &abs_src, &target_path)
+                    .await?;
+            }
             Ok(RpcResponse::OkMessage("Mounted".to_string()))
         }
 
@@ -921,6 +966,47 @@ where
             instance,
             target_path,
         } => {
+            let (is_running, instance_dir, ssh_port, ssh_user, targets_to_clean) = {
+                let store = ctx.store.lock().await;
+                let rec = store
+                    .data
+                    .instances
+                    .get(&instance)
+                    .with_context(|| format!("No such instance: '{}'", instance))?;
+                let is_running = rec.details.state == InstanceState::Running;
+                let targets = match &target_path {
+                    Some(p) => vec![p.clone()],
+                    None => rec.details.mounts.keys().cloned().collect(),
+                };
+                (
+                    is_running,
+                    rec.instance_dir.clone(),
+                    rec.details.ssh_port,
+                    rec.details.ssh_user.clone(),
+                    targets,
+                )
+            };
+
+            if is_running {
+                for target in targets_to_clean {
+                    let clean_cmd = vec![format!(
+                        "sudo rm -rf '{0}'/* '{0}'/.[!.]* 2>/dev/null || true",
+                        target
+                    )];
+                    let _ = ctx
+                        .ssh
+                        .exec_command(
+                            &instance,
+                            &instance_dir,
+                            ssh_port,
+                            &ssh_user,
+                            &clean_cmd,
+                            None,
+                        )
+                        .await;
+                }
+            }
+
             let mut store = ctx.store.lock().await;
             store.remove_mount(&instance, target_path.as_deref())?;
             Ok(RpcResponse::OkMessage("Unmounted".to_string()))
@@ -930,7 +1016,7 @@ where
             sources,
             destination,
             recursive,
-            parents: _,
+            parents,
         } => {
             // Find which instance is referenced in either sources or destination (`instance:path`)
             let find_inst = |s: &str| -> Option<String> {
@@ -969,6 +1055,7 @@ where
                         src,
                         &destination,
                         recursive,
+                        parents,
                     )
                     .await?;
             }
@@ -981,9 +1068,26 @@ where
             comment,
         } => {
             let mut store = ctx.store.lock().await;
+            let (is_running, qmp_port, disk_path) = {
+                let rec = store
+                    .data
+                    .instances
+                    .get(&instance)
+                    .with_context(|| format!("No such instance: '{}'", instance))?;
+                (
+                    rec.details.state == InstanceState::Running,
+                    rec.qmp_port,
+                    rec.disk_path.clone(),
+                )
+            };
             let snap = store.create_snapshot(&instance, snapshot_name, comment)?;
-            let disk_path = store.data.instances[&instance].disk_path.clone();
-            ctx.driver.take_disk_snapshot(&disk_path, &snap.name).await?;
+            if is_running {
+                ctx.driver
+                    .take_live_snapshot(qmp_port, &disk_path, &snap.name)
+                    .await?;
+            } else {
+                ctx.driver.take_disk_snapshot(&disk_path, &snap.name).await?;
+            }
             Ok(RpcResponse::SnapshotCreated(snap))
         }
 
@@ -993,11 +1097,28 @@ where
             destructive: _,
         } => {
             let mut store = ctx.store.lock().await;
+            let (is_running, qmp_port, disk_path) = {
+                let rec = store
+                    .data
+                    .instances
+                    .get(&instance)
+                    .with_context(|| format!("No such instance: '{}'", instance))?;
+                (
+                    rec.details.state == InstanceState::Running,
+                    rec.qmp_port,
+                    rec.disk_path.clone(),
+                )
+            };
             let snap = store.restore_snapshot(&instance, &snapshot_name)?;
-            let disk_path = store.data.instances[&instance].disk_path.clone();
-            ctx.driver
-                .restore_disk_snapshot(&disk_path, &snap.name)
-                .await?;
+            if is_running {
+                ctx.driver
+                    .restore_live_snapshot(qmp_port, &disk_path, &snap.name)
+                    .await?;
+            } else {
+                ctx.driver
+                    .restore_disk_snapshot(&disk_path, &snap.name)
+                    .await?;
+            }
             Ok(RpcResponse::SnapshotCreated(snap))
         }
 

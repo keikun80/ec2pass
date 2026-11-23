@@ -131,31 +131,48 @@ impl SshManager {
             command.join(" ")
         };
 
-        let output = Command::new("ssh")
-            .args([
-                "-i",
-                &self.private_key_path.to_string_lossy(),
-                "-p",
-                &ssh_port.to_string(),
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "UserKnownHostsFile=/dev/null",
-                "-o",
-                "LogLevel=ERROR",
-                "-o",
-                "ConnectTimeout=10",
-                &format!("{}@127.0.0.1", ssh_user),
-                &remote_cmd,
-            ])
-            .output()
-            .await
-            .context("Failed to invoke ssh client")?;
+        let mut last_res = (String::new(), String::new(), 1);
+        for attempt in 1..=6 {
+            let output = Command::new("ssh")
+                .args([
+                    "-i",
+                    &self.private_key_path.to_string_lossy(),
+                    "-p",
+                    &ssh_port.to_string(),
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    "-o",
+                    "UserKnownHostsFile=/dev/null",
+                    "-o",
+                    "LogLevel=ERROR",
+                    "-o",
+                    "ConnectTimeout=10",
+                    &format!("{}@127.0.0.1", ssh_user),
+                    &remote_cmd,
+                ])
+                .output()
+                .await
+                .context("Failed to invoke ssh client")?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let code = output.status.code().unwrap_or(1);
-        Ok((stdout, stderr, code))
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let code = output.status.code().unwrap_or(1);
+            last_res = (stdout, stderr, code);
+
+            if code == 255
+                && attempt < 6
+                && (last_res.1.contains("banner exchange")
+                    || last_res.1.contains("Connection refused")
+                    || last_res.1.contains("Connection reset")
+                    || last_res.1.contains("kex_exchange_identification")
+                    || last_res.1.contains("closed by remote host"))
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                continue;
+            }
+            break;
+        }
+        Ok(last_res)
     }
 
     /// Polls the instance SSH port until the VM responds and cloud-init finishes,
@@ -224,13 +241,41 @@ impl SshManager {
     /// Transfers files or directories between Host and Guest (`ec2pass transfer`).
     pub async fn transfer_path(
         &self,
-        _instance_dir: &Path,
+        instance_dir: &Path,
         ssh_port: u16,
         ssh_user: &str,
         src: &str,
         dst: &str,
         recursive: bool,
+        parents: bool,
     ) -> Result<()> {
+        if parents {
+            if let Some((_inst, guest_path)) = dst.split_once(':') {
+                if let Some(parent) = Path::new(guest_path).parent() {
+                    let p_str = parent.to_string_lossy();
+                    if !p_str.is_empty() && p_str != "/" {
+                        let _ = self
+                            .exec_command(
+                                "instance",
+                                instance_dir,
+                                ssh_port,
+                                ssh_user,
+                                &[format!(
+                                    "sudo mkdir -p '{}' && sudo chown -R {}:{} '{}'",
+                                    p_str, ssh_user, ssh_user, p_str
+                                )],
+                                None,
+                            )
+                            .await;
+                    }
+                }
+            } else if !dst.contains(':') {
+                if let Some(parent) = Path::new(dst).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+            }
+        }
+
         let format_scp_endpoint = |spec: &str| -> String {
             if let Some((inst, guest_path)) = spec.split_once(':') {
                 if inst.len() > 1 {
@@ -260,6 +305,67 @@ impl SshManager {
         let status = cmd.status().await.context("Failed to execute scp")?;
         if !status.success() {
             bail!("scp transfer failed with exit code {:?}", status.code());
+        }
+        Ok(())
+    }
+
+    /// Synchronizes a host directory into a guest directory mount path.
+    pub async fn sync_mount(
+        &self,
+        instance_dir: &Path,
+        ssh_port: u16,
+        ssh_user: &str,
+        host_src: &str,
+        guest_target: &str,
+    ) -> Result<()> {
+        let src_path = Path::new(host_src);
+        if !src_path.exists() {
+            bail!("Host source path '{}' does not exist", host_src);
+        }
+
+        // 1. Ensure target directory exists in guest with proper ownership and write permissions
+        let mkdir_cmd = vec![format!(
+            "sudo mkdir -p '{}' && sudo chown -R {}:{} '{}' && sudo chmod -R u+w '{}'",
+            guest_target, ssh_user, ssh_user, guest_target, guest_target
+        )];
+        self.exec_command(
+            "instance",
+            instance_dir,
+            ssh_port,
+            ssh_user,
+            &mkdir_cmd,
+            None,
+        )
+        .await
+        .context("Failed to initialize target mount directory in guest")?;
+
+        // 2. Transfer host directory contents into guest target directory
+        let scp_src = if src_path.is_dir() {
+            format!("{}/.", host_src.trim_end_matches('/'))
+        } else {
+            host_src.to_string()
+        };
+
+        let mut cmd = Command::new("scp");
+        cmd.args([
+            "-i",
+            &self.private_key_path.to_string_lossy(),
+            "-P",
+            &ssh_port.to_string(),
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
+            "-r",
+            &scp_src,
+            &format!("{}@127.0.0.1:{}", ssh_user, guest_target),
+        ]);
+
+        let status = cmd.status().await.context("Failed to execute mount sync scp")?;
+        if !status.success() {
+            bail!("Mount synchronization failed with exit code {:?}", status.code());
         }
         Ok(())
     }

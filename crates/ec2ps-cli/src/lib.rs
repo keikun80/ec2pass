@@ -303,8 +303,12 @@ enum Commands {
 
     /// Restore an instance from a snapshot
     Restore {
-        /// The snapshot to restore in <instance>.<snapshot> format
-        snapshot_spec: String,
+        /// Target instance or snapshot specification in <instance>.<snapshot> or <instance> format
+        target: String,
+
+        /// Snapshot name to restore when targeting an instance
+        #[arg(short, long)]
+        snapshot: Option<String>,
 
         /// Discard the current state without taking an automatic backup snapshot
         #[arg(short, long)]
@@ -403,7 +407,85 @@ pub async fn entry_main() {
 }
 
 async fn run_cli() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(e) => {
+            // Check if the first non-option argument matches a registered alias
+            let args: Vec<String> = std::env::args().collect();
+            let mut candidate_idx = 1;
+            let mut custom_addr = None;
+            while candidate_idx < args.len() {
+                if args[candidate_idx] == "--daemon-addr" && candidate_idx + 1 < args.len() {
+                    custom_addr = Some(args[candidate_idx + 1].clone());
+                    candidate_idx += 2;
+                } else if args[candidate_idx].starts_with("--daemon-addr=") {
+                    custom_addr = Some(
+                        args[candidate_idx]
+                            .trim_start_matches("--daemon-addr=")
+                            .to_string(),
+                    );
+                    candidate_idx += 1;
+                } else if args[candidate_idx].starts_with('-') {
+                    candidate_idx += 1;
+                } else {
+                    break;
+                }
+            }
+
+            if candidate_idx < args.len() {
+                let candidate_alias = &args[candidate_idx];
+                let default_addr = ec2ps_protocol::default_daemon_address();
+                let addr = custom_addr.as_deref().unwrap_or(&default_addr);
+
+                if let Ok(RpcResponse::AliasList(aliases)) =
+                    send_rpc(addr, RpcRequest::Aliases, false).await
+                {
+                    if let Some(target_alias) =
+                        aliases.into_iter().find(|a| a.alias_name == *candidate_alias)
+                    {
+                        let mut exec_cmd = vec![target_alias.command];
+                        exec_cmd.extend(args.into_iter().skip(candidate_idx + 1));
+                        let wd = if target_alias.working_directory.is_empty()
+                            || target_alias.working_directory == "map"
+                        {
+                            None
+                        } else {
+                            Some(target_alias.working_directory)
+                        };
+
+                        let resp = send_rpc(
+                            addr,
+                            RpcRequest::Exec {
+                                name: target_alias.instance,
+                                command: exec_cmd,
+                                working_dir: wd,
+                            },
+                            false,
+                        )
+                        .await?;
+
+                        if let RpcResponse::ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                        } = resp
+                        {
+                            if !stdout.is_empty() {
+                                print!("{}", stdout);
+                            }
+                            if !stderr.is_empty() {
+                                eprint!("{}", stderr);
+                            }
+                            std::process::exit(exit_code);
+                        }
+                    }
+                }
+            }
+
+            // If not an alias or alias execution failed, print standard clap error and exit
+            e.exit();
+        }
+    };
     let default_addr = ec2ps_protocol::default_daemon_address();
     let addr = cli.daemon_addr.as_deref().unwrap_or(&default_addr);
 
@@ -766,11 +848,29 @@ async fn run_cli() -> Result<()> {
             recursive,
             parents,
         } => {
-            let destination = paths.pop().context("Missing destination path")?;
+            let mut destination = paths.pop().context("Missing destination path")?;
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+            let resolve_path = |p: &str| -> String {
+                if p.contains(':') {
+                    p.to_string()
+                } else {
+                    let pb = PathBuf::from(p);
+                    if pb.is_absolute() {
+                        pb.to_string_lossy().to_string()
+                    } else {
+                        cwd.join(pb).to_string_lossy().to_string()
+                    }
+                }
+            };
+
+            let resolved_sources: Vec<String> = paths.iter().map(|p| resolve_path(p)).collect();
+            destination = resolve_path(&destination);
+
             send_rpc(
                 addr,
                 RpcRequest::Transfer {
-                    sources: paths,
+                    sources: resolved_sources,
                     destination,
                     recursive,
                     parents,
@@ -801,17 +901,22 @@ async fn run_cli() -> Result<()> {
         }
 
         Commands::Restore {
-            snapshot_spec,
+            target,
+            snapshot,
             destructive,
         } => {
-            let (instance, snapshot_name) = snapshot_spec
-                .split_once('.')
-                .context("Restore target must be in <instance>.<snapshot> format")?;
+            let (instance, snapshot_name) = if let Some(s) = snapshot {
+                (target.as_str(), s)
+            } else if let Some((inst, snap)) = target.split_once('.') {
+                (inst, snap.to_string())
+            } else {
+                bail!("Restore target must be in <instance>.<snapshot> format or specify --snapshot / -s");
+            };
             let resp = send_rpc(
                 addr,
                 RpcRequest::Restore {
                     instance: instance.to_string(),
-                    snapshot_name: snapshot_name.to_string(),
+                    snapshot_name,
                     destructive,
                 },
                 true,
@@ -1103,6 +1208,79 @@ async fn send_rpc(addr: &str, req: RpcRequest, show_progress: bool) -> Result<Rp
     send_rpc_stream(stream, req, show_progress).await
 }
 
+fn default_prompt_for_req(req: &RpcRequest) -> String {
+    match req {
+        RpcRequest::Launch { .. } => "Launching instance...".to_string(),
+        RpcRequest::Start { names, .. } => {
+            if names.is_empty() {
+                "Starting instance...".to_string()
+            } else {
+                format!("Starting {}...", names.join(", "))
+            }
+        }
+        RpcRequest::Stop { names, .. } => {
+            if names.is_empty() {
+                "Stopping instance...".to_string()
+            } else {
+                format!("Stopping {}...", names.join(", "))
+            }
+        }
+        RpcRequest::Restart { names, .. } => {
+            if names.is_empty() {
+                "Restarting instance...".to_string()
+            } else {
+                format!("Restarting {}...", names.join(", "))
+            }
+        }
+        RpcRequest::Suspend { names, .. } => {
+            if names.is_empty() {
+                "Suspending instance...".to_string()
+            } else {
+                format!("Suspending {}...", names.join(", "))
+            }
+        }
+        RpcRequest::Mount { instance, target_path, .. } => {
+            format!("Mounting directory into {}:{}...", instance, target_path)
+        }
+        RpcRequest::Umount { instance, target_path } => {
+            if let Some(p) = target_path {
+                format!("Unmounting {}:{}...", instance, p)
+            } else {
+                format!("Unmounting all mounts on {}...", instance)
+            }
+        }
+        RpcRequest::Transfer { destination, .. } => {
+            format!("Transferring files => {}...", destination)
+        }
+        RpcRequest::Snapshot { instance, snapshot_name, .. } => {
+            if let Some(name) = snapshot_name {
+                format!("Taking snapshot '{}' on {}...", name, instance)
+            } else {
+                format!("Taking snapshot on {}...", instance)
+            }
+        }
+        RpcRequest::Restore { instance, snapshot_name, .. } => {
+            format!("Restoring snapshot '{}' on {}...", snapshot_name, instance)
+        }
+        RpcRequest::Clone { source_name, destination_name } => {
+            if let Some(dest) = destination_name {
+                format!("Cloning {} to {}...", source_name, dest)
+            } else {
+                format!("Cloning {}...", source_name)
+            }
+        }
+        RpcRequest::Delete { names, purge, .. } => {
+            let action = if *purge { "Purging" } else { "Deleting" };
+            format!("{} {}...", action, names.join(", "))
+        }
+        RpcRequest::Recover { names, .. } => {
+            format!("Recovering {}...", names.join(", "))
+        }
+        RpcRequest::Purge => "Purging all deleted instances...".to_string(),
+        _ => "Working...".to_string(),
+    }
+}
+
 async fn send_rpc_stream<S>(stream: S, req: RpcRequest, show_progress: bool) -> Result<RpcResponse>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -1116,60 +1294,79 @@ where
 
     let is_terminal = io::stderr().is_terminal();
     let mut last_was_inline = false;
+    let spinner_frames = ["|", "/", "-", "\\"];
+    let mut spinner_idx = 0usize;
+    let mut current_status = default_prompt_for_req(&req);
+    let mut retrieving_progress: Option<(u8, String)> = None;
 
+    let mut interval = tokio::time::interval(Duration::from_millis(100));
     let mut lines = BufReader::new(reader).lines();
-    while let Some(line) = lines.next_line().await? {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let frame: RpcStreamFrame = serde_json::from_str(&line)?;
-        match frame {
-            RpcStreamFrame::Progress {
-                phase,
-                message,
-                percent,
-            } => {
-                if show_progress {
-                    if phase == "Retrieving image" {
-                        if let Some(pct) = percent {
-                            let bar = render_progress_bar(pct, 20);
-                            if is_terminal {
-                                eprint!("\r\x1b[2K[Retrieving image] {} {:>3}%  {}", bar, pct, message);
-                                let _ = io::stderr().flush();
-                                last_was_inline = true;
-                            } else {
-                                eprintln!("[{:>3}%] [Retrieving image] {} {}", pct, bar, message);
-                                let _ = io::stderr().flush();
-                            }
-                        } else {
-                            if last_was_inline {
-                                eprintln!();
-                                last_was_inline = false;
-                            }
-                            eprintln!("[Retrieving image] {}", message);
-                            let _ = io::stderr().flush();
-                        }
+
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                if is_terminal && show_progress {
+                    let frame = spinner_frames[spinner_idx % spinner_frames.len()];
+                    spinner_idx = spinner_idx.wrapping_add(1);
+
+                    if let Some((pct, ref msg)) = retrieving_progress {
+                        let bar = render_progress_bar(pct, 20);
+                        eprint!("\r\x1b[2K{} [Retrieving image] {} {:>3}%  {}", frame, bar, pct, msg);
                     } else {
-                        if last_was_inline {
-                            eprintln!();
-                            last_was_inline = false;
-                        }
-                        if let Some(pct) = percent {
-                            eprintln!("[{:>3}%] {}", pct, message);
-                        } else {
-                            eprintln!("{}", message);
-                        }
-                        let _ = io::stderr().flush();
+                        eprint!("\r\x1b[2K{} {}", frame, current_status);
                     }
+                    let _ = io::stderr().flush();
+                    last_was_inline = true;
                 }
             }
-            RpcStreamFrame::Response(resp) => {
-                if last_was_inline {
-                    eprintln!();
+            res = lines.next_line() => {
+                let line = match res? {
+                    Some(l) => l,
+                    None => break,
+                };
+                if line.trim().is_empty() {
+                    continue;
                 }
-                match resp {
-                    RpcResponse::Error(err_msg) => bail!("{}", err_msg),
-                    other => return Ok(other),
+                let frame: RpcStreamFrame = serde_json::from_str(&line)?;
+                match frame {
+                    RpcStreamFrame::Progress {
+                        phase,
+                        message,
+                        percent,
+                    } => {
+                        if show_progress {
+                            if phase == "Retrieving image" {
+                                if let Some(pct) = percent {
+                                    retrieving_progress = Some((pct, message.clone()));
+                                }
+                            } else {
+                                retrieving_progress = None;
+                                if let Some(pct) = percent {
+                                    current_status = format!("[{:>3}%] {}", pct, message);
+                                } else {
+                                    current_status = message.clone();
+                                }
+                            }
+                            if !is_terminal {
+                                if let Some(pct) = percent {
+                                    eprintln!("[{:>3}%] {}", pct, message);
+                                } else {
+                                    eprintln!("{}", message);
+                                }
+                                let _ = io::stderr().flush();
+                            }
+                        }
+                    }
+                    RpcStreamFrame::Response(resp) => {
+                        if last_was_inline {
+                            eprint!("\r\x1b[2K");
+                            let _ = io::stderr().flush();
+                        }
+                        match resp {
+                            RpcResponse::Error(err_msg) => bail!("{}", err_msg),
+                            other => return Ok(other),
+                        }
+                    }
                 }
             }
         }
