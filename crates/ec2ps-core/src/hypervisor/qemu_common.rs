@@ -19,12 +19,11 @@ impl QemuDriver {
     /// Detects QEMU binaries in PATH or known installation locations.
     /// Returns None if QEMU binaries cannot be found.
     pub fn detect_optional() -> Option<Self> {
-        let base_bin = if cfg!(target_arch = "aarch64") {
-            "qemu-system-aarch64"
+        let candidate_bins = if cfg!(target_arch = "aarch64") {
+            vec!["qemu-system-aarch64"]
         } else {
-            "qemu-system-x86_64"
+            vec!["qemu-system-x86_64", "qemu-kvm"]
         };
-        let base_img = "qemu-img";
 
         let candidate_dirs = [
             PathBuf::from(""),
@@ -33,36 +32,55 @@ impl QemuDriver {
             PathBuf::from("/usr/local/bin"),
             PathBuf::from("/opt/homebrew/bin"),
             PathBuf::from("/usr/bin"),
+            PathBuf::from("/usr/libexec"),
         ];
 
+        let mut found_img = None;
         for dir in &candidate_dirs {
-            let bin_path = if dir.as_os_str().is_empty() {
-                PathBuf::from(base_bin)
-            } else if cfg!(windows) {
-                dir.join(format!("{}.exe", base_bin))
-            } else {
-                dir.join(base_bin)
-            };
-
             let img_path = if dir.as_os_str().is_empty() {
-                PathBuf::from(base_img)
+                PathBuf::from("qemu-img")
             } else if cfg!(windows) {
-                dir.join(format!("{}.exe", base_img))
+                dir.join("qemu-img.exe")
             } else {
-                dir.join(base_img)
+                dir.join("qemu-img")
             };
 
-            if let Ok(s) = std::process::Command::new(&bin_path)
+            if let Ok(s) = std::process::Command::new(&img_path)
                 .arg("--version")
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status()
             {
                 if s.success() {
-                    return Some(Self {
-                        qemu_bin: bin_path.to_string_lossy().to_string(),
-                        qemu_img_bin: img_path.to_string_lossy().to_string(),
-                    });
+                    found_img = Some(img_path.to_string_lossy().to_string());
+                    break;
+                }
+            }
+        }
+        let found_img = found_img?;
+
+        for base_bin in &candidate_bins {
+            for dir in &candidate_dirs {
+                let bin_path = if dir.as_os_str().is_empty() {
+                    PathBuf::from(base_bin)
+                } else if cfg!(windows) {
+                    dir.join(format!("{}.exe", base_bin))
+                } else {
+                    dir.join(base_bin)
+                };
+
+                if let Ok(s) = std::process::Command::new(&bin_path)
+                    .arg("--version")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                {
+                    if s.success() {
+                        return Some(Self {
+                            qemu_bin: bin_path.to_string_lossy().to_string(),
+                            qemu_img_bin: found_img,
+                        });
+                    }
                 }
             }
         }
@@ -143,7 +161,21 @@ impl QemuDriver {
             "{{\"execute\":\"human-monitor-command\",\"arguments\":{{\"command-line\":\"{}\"}}}}",
             escaped
         );
-        self.send_qmp_execute(qmp_port, &payload).await
+        let resp = self.send_qmp_execute(qmp_port, &payload).await?;
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&resp) {
+            if let Some(ret) = v.get("return").and_then(|r| r.as_str()) {
+                let trimmed = ret.trim();
+                if trimmed.starts_with("Error")
+                    || trimmed.starts_with("error:")
+                    || trimmed.contains("could not open")
+                    || trimmed.contains("does not support snapshots")
+                {
+                    bail!("HMP '{}' failed: {}", hmp_cmd, trimmed);
+                }
+                return Ok(ret.to_string());
+            }
+        }
+        Ok(resp)
     }
 
     /// Sends a JSON QMP command (`system_powerdown`, `stop`, `cont`, `quit`) to the VM's QMP TCP socket.
@@ -151,6 +183,49 @@ impl QemuDriver {
         let payload = format!("{{\"execute\":\"{}\"}}", execute_cmd);
         self.send_qmp_execute(qmp_port, &payload).await?;
         Ok(())
+    }
+
+    /// Discovers the edk2 UEFI firmware binary for aarch64 VM boot if available.
+    pub fn find_aarch64_uefi_firmware(&self) -> Option<PathBuf> {
+        // 1. Check relative to discovered QEMU binary directory
+        if let Some(bin_parent) = Path::new(&self.qemu_bin).parent() {
+            let share_candidates = [
+                bin_parent.join("share/qemu/edk2-aarch64-code.fd"),
+                bin_parent.join("../share/qemu/edk2-aarch64-code.fd"),
+                bin_parent.join("edk2-aarch64-code.fd"),
+            ];
+            for cand in &share_candidates {
+                if cand.exists() {
+                    return Some(cand.clone());
+                }
+            }
+        }
+
+        // 2. Standard system locations across macOS, Linux, and Windows
+        let candidates = [
+            // Homebrew macOS (Apple Silicon & Intel)
+            "/opt/homebrew/share/qemu/edk2-aarch64-code.fd",
+            "/usr/local/share/qemu/edk2-aarch64-code.fd",
+            // Linux RHEL / Rocky / Fedora
+            "/usr/share/edk2/aarch64/QEMU_EFI.fd",
+            "/usr/share/edk2/aarch64/QEMU_EFI.silent.fd",
+            // Linux Debian / Ubuntu
+            "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd",
+            "/usr/share/qemu-efi/QEMU_EFI.fd",
+            // Linux generic / Arch / openSUSE / Alpine
+            "/usr/share/qemu/edk2-aarch64-code.fd",
+            "/usr/share/qemu/qemu-uefi-aarch64.bin",
+            // Windows
+            r"C:\Program Files\qemu\share\edk2-aarch64-code.fd",
+        ];
+
+        for p in &candidates {
+            let path = PathBuf::from(p);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        None
     }
 
     /// Builds the full command line argument list for an Amazon Linux 2023 VM.
@@ -179,10 +254,10 @@ impl QemuDriver {
                 "file={},if=virtio,format=qcow2,cache=writeback,discard=unmap",
                 rec.disk_path.to_string_lossy()
             ),
-            // NoCloud cidata seed.iso attached as read-only CD-ROM
+            // NoCloud cidata seed.iso attached as read-only CD-ROM (snapshot=off prevents snapshot locking)
             "-drive".to_string(),
             format!(
-                "file={},media=cdrom,readonly=on",
+                "file={},media=cdrom,readonly=on,snapshot=off",
                 rec.seed_iso_path.to_string_lossy()
             ),
             // VirtIO Network with user-mode SSH port forwarding
@@ -197,9 +272,45 @@ impl QemuDriver {
             "virtio-rng-pci".to_string(),
         ];
 
+        // VirtIO 9p shared filesystem mounts
+        for (idx, (_tgt, spec)) in rec.details.mounts.iter().enumerate() {
+            let tag = format!("ec2ps_mount_{}", idx);
+            args.extend([
+                "-virtfs".to_string(),
+                format!(
+                    "local,path={},mount_tag={},security_model=none",
+                    spec.source_path, tag
+                ),
+            ]);
+        }
+
+        // Additional user-requested network devices (--network <bridge>)
+        for (idx, net) in rec.networks.iter().enumerate() {
+            let net_id = format!("net{}", idx + 1);
+            let mac = format!(
+                "52:54:00:24:{:02x}:{:02x}",
+                (idx + 1) & 0xff,
+                (rec.qmp_port % 250) as u8
+            );
+            let br_name = if net == "bridge" || net == "bridged" || net.is_empty() {
+                "br0"
+            } else {
+                net.as_str()
+            };
+            args.extend([
+                "-netdev".to_string(),
+                format!("bridge,id={},br={}", net_id, br_name),
+                "-device".to_string(),
+                format!("virtio-net-pci,netdev={},mac={}", net_id, mac),
+            ]);
+        }
+
         // Platform-optimal machine type and hardware acceleration
         if cfg!(target_arch = "aarch64") {
             args.extend(["-M".to_string(), "virt,highmem=on".to_string()]);
+            if let Some(bios_path) = self.find_aarch64_uefi_firmware() {
+                args.extend(["-bios".to_string(), bios_path.to_string_lossy().to_string()]);
+            }
         }
 
         if cfg!(target_os = "linux") {
@@ -215,6 +326,7 @@ impl QemuDriver {
                     "tcg".to_string(),
                     "-cpu".to_string(),
                     "max".to_string(),
+                    "-no-hpet".to_string(),
                 ]);
             }
         } else if cfg!(target_os = "macos") {
@@ -280,6 +392,32 @@ impl super::VirtualMachineDriver for QemuDriver {
 
         if !status.success() {
             bail!("qemu-img failed to create overlay disk {:?}", overlay_path);
+        }
+        Ok(())
+    }
+
+    async fn resize_disk(&self, disk_path: &Path, new_bytes: u64) -> Result<()> {
+        if !disk_path.exists() {
+            bail!("Disk file {:?} does not exist", disk_path);
+        }
+
+        let mut cmd = Command::new(&self.qemu_img_bin);
+        cmd.args([
+            "resize",
+            "-f",
+            "qcow2",
+            &disk_path.to_string_lossy(),
+            &new_bytes.to_string(),
+        ]);
+
+        let output = cmd
+            .output()
+            .await
+            .context("Failed to execute qemu-img resize")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("qemu-img resize failed: {}", stderr.trim());
         }
         Ok(())
     }
@@ -397,21 +535,11 @@ impl super::VirtualMachineDriver for QemuDriver {
     async fn restore_live_snapshot(
         &self,
         qmp_port: u16,
-        disk_path: &Path,
+        _disk_path: &Path,
         snapshot_name: &str,
     ) -> Result<()> {
-        match self
-            .send_hmp_command(qmp_port, &format!("loadvm {}", snapshot_name))
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                tracing::warn!(
-                    "QMP live restore failed ({:?}), falling back to offline disk restore",
-                    e
-                );
-                self.restore_disk_snapshot(disk_path, snapshot_name).await
-            }
-        }
+        self.send_hmp_command(qmp_port, &format!("loadvm {}", snapshot_name))
+            .await?;
+        Ok(())
     }
 }

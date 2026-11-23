@@ -96,11 +96,22 @@ impl VirtualMachineDriver for HypervDriver {
         Ok(())
     }
 
+    async fn resize_disk(&self, disk_path: &Path, new_bytes: u64) -> Result<()> {
+        let cmd = format!(
+            "Resize-VHD -Path '{}' -SizeBytes {} -ErrorAction Stop",
+            disk_path.to_string_lossy(),
+            new_bytes
+        );
+        Self::run_ps(&cmd).await?;
+        Ok(())
+    }
+
     async fn start_vm(&self, rec: &InstanceRecord) -> Result<u32> {
         let name = &rec.details.name;
         let cpus = rec.details.cpus;
         let mem = rec.details.memory_total_bytes;
         let disk = rec.disk_path.to_string_lossy();
+        let seed_iso = rec.seed_iso_path.to_string_lossy();
 
         let cmd = format!(
             r#"
@@ -109,13 +120,36 @@ impl VirtualMachineDriver for HypervDriver {
                 New-VM -Name '{name}' -MemoryStartupBytes {mem} -Generation 2 -NoVHD | Out-Null
                 Set-VMProcessor -VMName '{name}' -Count {cpus} | Out-Null
                 Add-VMHardDiskDrive -VMName '{name}' -Path '{disk}' | Out-Null
-                # NOTE: ec2pass primarily centers on QEMU, where seed.iso is natively mounted as a CD-ROM.
-                # Hyper-V DVD drive (Add-VMDvdDrive) functionality is commented out and disabled:
-                # Add-VMDvdDrive -VMName <name> -Path <seed_iso> | Out-Null
                 Set-VMFirmware -VMName '{name}' -EnableSecureBoot Off | Out-Null
+
+                $switch = Get-VMSwitch -Name "Default Switch" -ErrorAction SilentlyContinue
+                if (-not $switch) {{
+                    $switch = Get-VMSwitch -ErrorAction SilentlyContinue | Select-Object -First 1
+                }}
+                if ($switch) {{
+                    Connect-VMNetworkAdapter -VMName '{name}' -SwitchName $switch.Name -ErrorAction SilentlyContinue | Out-Null
+                }}
             }}
-            Start-VM -Name '{name}' | Out-Null
-            (Get-Process -Name vmwp -ErrorAction SilentlyContinue | Select-Object -First 1).Id
+
+            $seed = '{seed_iso}'
+            if ($seed -and (Test-Path $seed)) {{
+                $dvd = Get-VMDvdDrive -VMName '{name}' -ErrorAction SilentlyContinue
+                if (-not $dvd) {{
+                    Add-VMDvdDrive -VMName '{name}' -Path $seed -ErrorAction SilentlyContinue | Out-Null
+                }} else {{
+                    Set-VMDvdDrive -VMName '{name}' -Path $seed -ErrorAction SilentlyContinue | Out-Null
+                }}
+            }}
+
+            Start-VM -Name '{name}' -ErrorAction Stop | Out-Null
+            $startedVm = Get-VM -Name '{name}' -ErrorAction Stop
+            $vmid = $startedVm.Id.ToString()
+            $proc = Get-CimInstance Win32_Process -Filter "Name = 'vmwp.exe'" -ErrorAction SilentlyContinue | Where-Object {{ $_.CommandLine -like "*$vmid*" }} | Select-Object -First 1
+            if ($proc) {{
+                $proc.ProcessId
+            }} else {{
+                (Get-Process -Name vmwp -ErrorAction SilentlyContinue | Select-Object -First 1).Id
+            }}
             "#
         );
         let out = Self::run_ps(&cmd).await?;
@@ -123,7 +157,7 @@ impl VirtualMachineDriver for HypervDriver {
             .lines()
             .last()
             .and_then(|l| l.trim().parse::<u32>().ok())
-            .unwrap_or(1000);
+            .unwrap_or_else(std::process::id);
         Ok(pid)
     }
 
@@ -131,42 +165,60 @@ impl VirtualMachineDriver for HypervDriver {
         let name = &rec.details.name;
         let flag = if force { "-TurnOff" } else { "-Force" };
         let cmd = format!(
-            "Stop-VM -Name '{}' {} -ErrorAction SilentlyContinue",
-            name, flag
+            r#"
+            $vm = Get-VM -Name '{name}' -ErrorAction SilentlyContinue
+            if ($vm -and $vm.State -eq 'Running') {{
+                Stop-VM -Name '{name}' {flag} -ErrorAction Stop
+            }}
+            "#
         );
-        let _ = Self::run_ps(&cmd).await;
+        Self::run_ps(&cmd).await?;
         Ok(())
     }
 
     async fn suspend_vm(&self, rec: &InstanceRecord) -> Result<()> {
         let name = &rec.details.name;
-        let cmd = format!("Suspend-VM -Name '{}' -ErrorAction SilentlyContinue", name);
-        let _ = Self::run_ps(&cmd).await;
+        let cmd = format!(
+            r#"
+            $vm = Get-VM -Name '{name}' -ErrorAction SilentlyContinue
+            if ($vm -and $vm.State -eq 'Running') {{
+                Suspend-VM -Name '{name}' -ErrorAction Stop
+            }}
+            "#
+        );
+        Self::run_ps(&cmd).await?;
         Ok(())
     }
 
     async fn resume_vm(&self, rec: &InstanceRecord) -> Result<()> {
         let name = &rec.details.name;
-        let cmd = format!("Resume-VM -Name '{}' -ErrorAction SilentlyContinue", name);
-        let _ = Self::run_ps(&cmd).await;
+        let cmd = format!(
+            r#"
+            $vm = Get-VM -Name '{name}' -ErrorAction SilentlyContinue
+            if ($vm -and $vm.State -eq 'Paused') {{
+                Resume-VM -Name '{name}' -ErrorAction Stop
+            }}
+            "#
+        );
+        Self::run_ps(&cmd).await?;
         Ok(())
     }
 
     async fn take_disk_snapshot(&self, _disk_path: &Path, snapshot_name: &str) -> Result<()> {
         let cmd = format!(
-            "Checkpoint-VM -SnapshotName '{}' -ErrorAction SilentlyContinue",
+            "Checkpoint-VM -SnapshotName '{}' -ErrorAction Stop",
             snapshot_name
         );
-        let _ = Self::run_ps(&cmd).await;
+        Self::run_ps(&cmd).await?;
         Ok(())
     }
 
     async fn restore_disk_snapshot(&self, _disk_path: &Path, snapshot_name: &str) -> Result<()> {
         let cmd = format!(
-            "Restore-VMCheckpoint -Name '{}' -Confirm:$false -ErrorAction SilentlyContinue",
+            "Restore-VMCheckpoint -Name '{}' -Confirm:$false -ErrorAction Stop",
             snapshot_name
         );
-        let _ = Self::run_ps(&cmd).await;
+        Self::run_ps(&cmd).await?;
         Ok(())
     }
 }

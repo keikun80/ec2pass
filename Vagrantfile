@@ -1,46 +1,68 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
-# Vagrantfile for InhausLab ec2pass - Multi-Platform (Amazon Linux 2023 & Windows 11) Environment
+# Vagrantfile for InhausLab ec2pass - Multi-Distribution Linux & Windows Environment
 
 Vagrant.require_version ">= 2.2.0"
 
 Vagrant.configure("2") do |config|
   # ============================================================================
-  # Machine 1: Amazon Linux 2023 (Default Primary Linux VM)
+  # Helper to configure Linux virtual machines
   # ============================================================================
-  config.vm.define "al2023", primary: true do |al|
-    al.vm.box = ENV["VAGRANT_BOX"] || "bento/amazonlinux-2023"
-    al.vm.hostname = "ec2pass-al2023"
-    al.vm.synced_folder ".", "/vagrant", disabled: true
+  def self.configure_linux_node(config, name, default_box, hostname, is_primary = false)
+    config.vm.define name, primary: is_primary, autostart: is_primary do |node|
+      node.vm.box = ENV["VAGRANT_#{name.upcase}_BOX"] || default_box
+      node.vm.hostname = hostname
+      node.vm.synced_folder ".", "/vagrant", disabled: true
 
-    # VirtualBox Provider Configuration
-    al.vm.provider "virtualbox" do |vb|
-      vb.name = "ec2pass-al2023-dev"
-      vb.cpus = (ENV["VM_CPUS"] || 2).to_i
-      vb.memory = (ENV["VM_MEMORY"] || 4096).to_i
+      # VirtualBox Provider Configuration
+      node.vm.provider "virtualbox" do |vb|
+        vb.name = "ec2pass-#{name}-dev"
+        vb.cpus = (ENV["VM_CPUS"] || 2).to_i
+        vb.memory = (ENV["VM_MEMORY"] || 4096).to_i
 
-      # Enable Nested Hardware Virtualization (/dev/kvm support)
-      vb.customize ["modifyvm", :id, "--nested-hw-virt", "on"]
-      vb.customize ["modifyvm", :id, "--ioapic", "on"]
-      vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
+        # Enable Nested Hardware Virtualization (/dev/kvm support)
+        vb.customize ["modifyvm", :id, "--nested-hw-virt", "on"]
+        vb.customize ["modifyvm", :id, "--ioapic", "on"]
+        vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
+      end
+
+      # Hyper-V Provider Configuration (Windows Host Native)
+      node.vm.provider "hyperv" do |hv|
+        hv.vmname = "ec2pass-#{name}-dev"
+        hv.cpus = (ENV["VM_CPUS"] || 2).to_i
+        hv.memory = (ENV["VM_MEMORY"] || 4096).to_i
+        hv.maxmemory = (ENV["VM_MAX_MEMORY"] || 8192).to_i
+        hv.enable_virtualization_extensions = true
+      end
+
+      node.vm.provision "shell",
+        path: "packaging/vagrant/provision.sh",
+        privileged: true
     end
-
-    # Hyper-V Provider Configuration (Windows Host Native)
-    al.vm.provider "hyperv" do |hv|
-      hv.vmname = "ec2pass-al2023-dev"
-      hv.cpus = (ENV["VM_CPUS"] || 2).to_i
-      hv.memory = (ENV["VM_MEMORY"] || 4096).to_i
-      hv.maxmemory = (ENV["VM_MAX_MEMORY"] || 8192).to_i
-      hv.enable_virtualization_extensions = true
-    end
-
-    al.vm.provision "shell",
-      path: "packaging/vagrant/provision.sh",
-      privileged: true
   end
 
   # ============================================================================
-  # Machine 2: Windows 11 Enterprise / Pro (Opt-in Windows VM: `vagrant up win11`)
+  # Machine 1: Amazon Linux 2023 (Default Primary Linux VM)
+  # ============================================================================
+  configure_linux_node(config, "al2023", "bento/amazonlinux-2023", "ec2pass-al2023", true)
+
+  # ============================================================================
+  # Machine 2: Rocky Linux 9 (Latest Rocky Linux EL9 VM)
+  # ============================================================================
+  configure_linux_node(config, "rocky9", "bento/rockylinux-9", "ec2pass-rocky9", false)
+
+  # ============================================================================
+  # Machine 3: Debian 12 Bookworm (Latest Debian Stable VM)
+  # ============================================================================
+  configure_linux_node(config, "debian12", "bento/debian-12", "ec2pass-debian12", false)
+
+  # ============================================================================
+  # Machine 4: Ubuntu 24.04 LTS Noble Numbat (Latest Ubuntu LTS VM)
+  # ============================================================================
+  configure_linux_node(config, "ubuntu24", "bento/ubuntu-24.04", "ec2pass-ubuntu24", false)
+
+  # ============================================================================
+  # Machine 5: Windows 11 Enterprise / Pro (Opt-in Windows VM: `vagrant up win11`)
   # ============================================================================
   config.vm.define "win11", autostart: false do |win|
     win.vm.box = ENV["VAGRANT_WIN11_BOX"] || "gusztavvargadr/windows-11"

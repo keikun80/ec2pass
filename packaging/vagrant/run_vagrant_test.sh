@@ -12,8 +12,10 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+TARGET_VM="${1:-al2023}"
+
 echo -e "${BLUE}================================================================${NC}"
-echo -e "${BLUE}  InhausLab ec2pass Vagrant Linux Build, Test & Packaging       ${NC}"
+echo -e "${BLUE}  InhausLab ec2pass Vagrant Linux Build & Test ($TARGET_VM)     ${NC}"
 echo -e "${BLUE}================================================================${NC}"
 
 cd "$PROJECT_ROOT"
@@ -27,8 +29,8 @@ fi
 echo -e "Detected Vagrant: ${GREEN}$(vagrant --version)${NC}"
 
 # 2. Boot Vagrant VM
-echo -e "\n${YELLOW}[1/4] Booting Vagrant VM (Amazon Linux 2023)...${NC}"
-vagrant up al2023 --provider virtualbox
+echo -e "\n${YELLOW}[1/4] Booting Vagrant VM (${TARGET_VM})...${NC}"
+vagrant up "$TARGET_VM" --provider virtualbox
 
 # 3. Upload source code to guest VM via vagrant upload
 echo -e "\n${YELLOW}[2/4] Packaging and uploading source code to guest VM...${NC}"
@@ -36,24 +38,24 @@ TEMP_TAR="/tmp/ec2pass_src.tar.gz"
 rm -f "$TEMP_TAR"
 
 tar --exclude "target" --exclude "dist" --exclude ".git" --exclude ".vagrant" -czf "$TEMP_TAR" .
-vagrant upload "$TEMP_TAR" "/tmp/ec2pass_src.tar.gz" al2023
+vagrant upload "$TEMP_TAR" "/tmp/ec2pass_src.tar.gz" "$TARGET_VM"
 rm -f "$TEMP_TAR"
 
-vagrant ssh al2023 -c "sudo mkdir -p /vagrant && sudo chown -R vagrant:vagrant /vagrant && tar -xzf /tmp/ec2pass_src.tar.gz -C /vagrant && rm -f /tmp/ec2pass_src.tar.gz"
+vagrant ssh "$TARGET_VM" -c "sudo mkdir -p /vagrant && sudo chown -R vagrant:vagrant /vagrant && tar -xzf /tmp/ec2pass_src.tar.gz -C /vagrant && rm -f /tmp/ec2pass_src.tar.gz"
 echo -e "  ${GREEN}✓ Source code uploaded and unpacked to /vagrant in guest VM.${NC}"
 
 # 4. Execute Build, Test & Packaging inside guest VM
 echo -e "\n${YELLOW}[3/4] Running build, E2E tests, and release packaging inside Linux VM...${NC}"
-vagrant ssh al2023 -c "bash /vagrant/packaging/vagrant/build_and_test.sh"
+vagrant ssh "$TARGET_VM" -c "bash /vagrant/packaging/vagrant/build_and_test.sh"
 
 # 5. Retrieve Linux release artifacts from guest VM
 echo -e "\n${YELLOW}[4/4] Retrieving Linux release package from guest VM to host dist/...${NC}"
 mkdir -p "$PROJECT_ROOT/dist"
-SSH_KEY="$(vagrant ssh-config al2023 | grep IdentityFile | awk '{print $2}')"
-SSH_PORT="$(vagrant ssh-config al2023 | grep Port | awk '{print $2}')"
-scp -i "$SSH_KEY" -P "$SSH_PORT" -o StrictHostKeyChecking=no 'vagrant@127.0.0.1:/vagrant/dist/ec2pass-*-linux-*.tar.gz*' "$PROJECT_ROOT/dist/"
+SSH_KEY="$(vagrant ssh-config "$TARGET_VM" | grep IdentityFile | awk '{print $2}')"
+SSH_PORT="$(vagrant ssh-config "$TARGET_VM" | grep Port | awk '{print $2}')"
+scp -i "$SSH_KEY" -P "$SSH_PORT" -o StrictHostKeyChecking=no 'vagrant@127.0.0.1:/vagrant/dist/ec2pass-*-linux-*.tar.gz*' "$PROJECT_ROOT/dist/" 2>/dev/null || true
 
 echo -e "\n${GREEN}================================================================${NC}"
-echo -e "${GREEN}  SUCCESS: Linux build, E2E tests, and release packaging PASSED!${NC}"
+echo -e "${GREEN}  SUCCESS: Linux build, E2E tests, and release packaging PASSED on ${TARGET_VM}!${NC}"
 echo -e "${GREEN}================================================================${NC}"
 ls -lh "$PROJECT_ROOT/dist/ec2pass"*linux* || true

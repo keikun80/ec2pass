@@ -698,15 +698,45 @@ async fn run_cli() -> Result<()> {
         Commands::Exec {
             name,
             working_directory,
-            no_map_working_directory: _,
+            no_map_working_directory,
             command,
         } => {
+            let effective_working_dir = if working_directory.is_some() {
+                working_directory
+            } else if !no_map_working_directory {
+                if let Ok(cwd) = std::env::current_dir() {
+                    let info_resp = send_rpc(
+                        addr,
+                        RpcRequest::Info {
+                            names: vec![name.clone()],
+                            all: false,
+                            snapshots: false,
+                        },
+                        false,
+                    )
+                    .await;
+                    if let Ok(RpcResponse::InstanceList(instances)) = info_resp {
+                        if let Some(inst) = instances.iter().find(|i| i.name == name) {
+                            resolve_mapped_working_directory(&cwd, &inst.mounts)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             let resp = send_rpc(
                 addr,
                 RpcRequest::Exec {
                     name,
                     command,
-                    working_dir: working_directory,
+                    working_dir: effective_working_dir,
                 },
                 false,
             )
@@ -730,12 +760,32 @@ async fn run_cli() -> Result<()> {
         }
 
         Commands::Shell { name } => {
+            // Resolve primary instance name dynamically from daemon settings
+            let primary_name = match send_rpc(
+                addr,
+                RpcRequest::Get {
+                    key: Some("client.primary-name".to_string()),
+                    keys_only: false,
+                },
+                false,
+            )
+            .await
+            {
+                Ok(RpcResponse::SettingsMap(map)) => map
+                    .get("client.primary-name")
+                    .cloned()
+                    .unwrap_or_else(|| "primary".to_string()),
+                _ => "primary".to_string(),
+            };
+
+            let is_primary_target = name.is_none() || name.as_deref() == Some(&primary_name);
+            let target = name.unwrap_or_else(|| primary_name.clone());
+
             // Check if instance exists; if not and it's default primary, auto-launch it
             let shell_resp =
-                match send_rpc(addr, RpcRequest::ShellInfo { name: name.clone() }, false).await {
+                match send_rpc(addr, RpcRequest::ShellInfo { name: Some(target.clone()) }, false).await {
                     Ok(r) => r,
-                    Err(_) if name.is_none() || name.as_deref() == Some("primary") => {
-                        let target = name.unwrap_or_else(|| "primary".to_string());
+                    Err(_) if is_primary_target => {
                         println!(
                             "Launching primary instance '{}' with Amazon Linux 2023...",
                             target
@@ -1432,4 +1482,95 @@ fn split_host_guest_mount(spec: &str) -> Option<(String, String)> {
     let host = spec[..idx].to_string();
     let guest = spec[idx + 1..].to_string();
     Some((host, guest))
+}
+
+/// Matches the current host working directory against instance mounts and returns
+/// the mapped guest directory, or None if no mount matches.
+fn resolve_mapped_working_directory(
+    cwd: &std::path::Path,
+    mounts: &std::collections::BTreeMap<String, ec2ps_protocol::MountSpec>,
+) -> Option<String> {
+    let mut best_match: Option<String> = None;
+    let mut longest_prefix_len = 0;
+    for (_target, mount) in mounts {
+        let host_path = std::path::Path::new(&mount.source_path);
+        if let Ok(rel) = cwd.strip_prefix(host_path) {
+            let match_len = host_path.as_os_str().len();
+            if match_len >= longest_prefix_len {
+                longest_prefix_len = match_len;
+                let guest_dir = if rel.as_os_str().is_empty() {
+                    mount.target_path.clone()
+                } else {
+                    let rel_str = rel.to_string_lossy().replace('\\', "/");
+                    format!("{}/{}", mount.target_path.trim_end_matches('/'), rel_str)
+                };
+                best_match = Some(guest_dir);
+            }
+        }
+    }
+    best_match
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ec2ps_protocol::MountSpec;
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    #[test]
+    fn test_split_host_guest_mount() {
+        assert_eq!(
+            split_host_guest_mount("/host/path:/guest/path"),
+            Some(("/host/path".to_string(), "/guest/path".to_string()))
+        );
+        assert_eq!(
+            split_host_guest_mount("C:\\host\\path:/guest/path"),
+            Some(("C:\\host\\path".to_string(), "/guest/path".to_string()))
+        );
+        assert_eq!(split_host_guest_mount("invalid"), None);
+    }
+
+    #[test]
+    fn test_resolve_mapped_working_directory() {
+        let mut mounts = BTreeMap::new();
+        mounts.insert(
+            "/home/ec2-user/project".to_string(),
+            MountSpec {
+                source_path: "/host/workspace/project".to_string(),
+                target_path: "/home/ec2-user/project".to_string(),
+                uid_map: vec![],
+                gid_map: vec![],
+                mount_type: "classic".to_string(),
+            },
+        );
+        mounts.insert(
+            "/home/ec2-user/project/sub".to_string(),
+            MountSpec {
+                source_path: "/host/workspace/project/sub".to_string(),
+                target_path: "/home/ec2-user/project/sub".to_string(),
+                uid_map: vec![],
+                gid_map: vec![],
+                mount_type: "classic".to_string(),
+            },
+        );
+
+        // Exact match
+        let cwd1 = Path::new("/host/workspace/project");
+        assert_eq!(
+            resolve_mapped_working_directory(cwd1, &mounts),
+            Some("/home/ec2-user/project".to_string())
+        );
+
+        // Subdirectory match (most specific mount chosen)
+        let cwd2 = Path::new("/host/workspace/project/sub/src");
+        assert_eq!(
+            resolve_mapped_working_directory(cwd2, &mounts),
+            Some("/home/ec2-user/project/sub/src".to_string())
+        );
+
+        // Unmounted path returns None
+        let cwd3 = Path::new("/other/random/path");
+        assert_eq!(resolve_mapped_working_directory(cwd3, &mounts), None);
+    }
 }

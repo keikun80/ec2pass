@@ -81,6 +81,8 @@ impl ImageVault {
                     "latest".to_string(),
                     "lts".to_string(),
                     "amzn2023".to_string(),
+                    "al2023-k6.12".to_string(),
+                    "kernel-6.12".to_string(),
                 ],
                 arch: arch.to_string(),
                 download_url: format!(
@@ -94,6 +96,105 @@ impl ImageVault {
                 },
                 size_bytes: 1_770_520_576,
                 description: "Amazon Linux 2023 KVM Cloud Image (Kernel 6.1 LTS, XFS, GPT, SELinux enforcing)".to_string(),
+            },
+            ImageCatalogEntry {
+                os: "Amazon Linux".to_string(),
+                release: "Amazon Linux 2023 Minimal".to_string(),
+                remote: "al2023-minimal".to_string(),
+                version: "2023.12.20261120.0".to_string(),
+                aliases: vec![
+                    "minimal".to_string(),
+                    "al2023-minimal".to_string(),
+                    "micro".to_string(),
+                ],
+                arch: arch.to_string(),
+                download_url: format!(
+                    "{}al2023-kvm-minimal-2023.12.20261120.0-kernel-6.1-{}.xfs.gpt.qcow2",
+                    cdn_base.replace("/kvm/", "/kvm-minimal/"), arch_suffix
+                ),
+                sha256: "".to_string(),
+                size_bytes: 750_000_000,
+                description: "Amazon Linux 2023 Minimal KVM Image (Lightweight runtime)".to_string(),
+            },
+            ImageCatalogEntry {
+                os: "Ubuntu".to_string(),
+                release: "Ubuntu 24.04 LTS (Noble)".to_string(),
+                remote: "ubuntu".to_string(),
+                version: "24.04 LTS".to_string(),
+                aliases: vec![
+                    "ubuntu".to_string(),
+                    "noble".to_string(),
+                    "ubuntu-24.04".to_string(),
+                    "ubuntu-noble".to_string(),
+                ],
+                arch: arch.to_string(),
+                download_url: if arch == "aarch64" {
+                    "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img".to_string()
+                } else {
+                    "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img".to_string()
+                },
+                sha256: "".to_string(),
+                size_bytes: 650_000_000,
+                description: "Ubuntu 24.04 LTS (Noble Numbat) Official Cloud Image".to_string(),
+            },
+            ImageCatalogEntry {
+                os: "Debian".to_string(),
+                release: "Debian 12 (Bookworm)".to_string(),
+                remote: "debian".to_string(),
+                version: "12 (Bookworm)".to_string(),
+                aliases: vec![
+                    "debian".to_string(),
+                    "bookworm".to_string(),
+                    "debian-12".to_string(),
+                ],
+                arch: arch.to_string(),
+                download_url: if arch == "aarch64" {
+                    "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-arm64.qcow2".to_string()
+                } else {
+                    "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2".to_string()
+                },
+                sha256: "".to_string(),
+                size_bytes: 600_000_000,
+                description: "Debian 12 (Bookworm) Official Generic Cloud Image".to_string(),
+            },
+            ImageCatalogEntry {
+                os: "Rocky Linux".to_string(),
+                release: "Rocky Linux 9".to_string(),
+                remote: "rocky".to_string(),
+                version: "9.4".to_string(),
+                aliases: vec![
+                    "rocky".to_string(),
+                    "rocky-9".to_string(),
+                    "rockylinux".to_string(),
+                ],
+                arch: arch.to_string(),
+                download_url: if arch == "aarch64" {
+                    "https://download.rockylinux.org/pub/rocky/9/images/aarch64/Rocky-9-GenericCloud-Base.latest.aarch64.qcow2".to_string()
+                } else {
+                    "https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2".to_string()
+                },
+                sha256: "".to_string(),
+                size_bytes: 900_000_000,
+                description: "Rocky Linux 9 Generic Cloud Base Image".to_string(),
+            },
+            ImageCatalogEntry {
+                os: "Fedora".to_string(),
+                release: "Fedora 40 Cloud".to_string(),
+                remote: "fedora".to_string(),
+                version: "40".to_string(),
+                aliases: vec![
+                    "fedora".to_string(),
+                    "fedora-40".to_string(),
+                ],
+                arch: arch.to_string(),
+                download_url: if arch == "aarch64" {
+                    "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/aarch64/images/Fedora-Cloud-Base-Generic.aarch64-40-1.14.qcow2".to_string()
+                } else {
+                    "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2".to_string()
+                },
+                sha256: "".to_string(),
+                size_bytes: 550_000_000,
+                description: "Fedora 40 Cloud Base Image".to_string(),
             },
             ImageCatalogEntry {
                 os: "Amazon Linux".to_string(),
@@ -475,16 +576,7 @@ impl ImageVault {
         let catalog = self.fetch_catalog(true).await;
         let normalized = q.strip_prefix("al2023:").unwrap_or(q).to_lowercase();
 
-        // Compatibility: if user passes aliases like "ubuntu", "lts", "al2023-k6.12", "minimal", map to AL2023 default LTS
-        let search_key = if normalized == "ubuntu"
-            || normalized.is_empty()
-            || normalized == "al2023-k6.12"
-            || normalized == "kernel-6.12"
-            || normalized == "next"
-            || normalized == "al2023-minimal"
-            || normalized == "minimal"
-            || normalized == "micro"
-        {
+        let search_key = if normalized.is_empty() {
             "default"
         } else {
             normalized.as_str()
@@ -503,7 +595,7 @@ impl ImageVault {
         }
 
         bail!(
-            "Unable to find an Amazon Linux image matching '{}'. Run 'ec2pass find' to list available images.",
+            "Unable to find an image matching '{}'. Available images/aliases: al2023, al2, minimal, ubuntu, debian, rocky, fedora. Run 'ec2pass find' to list available images.",
             q
         )
     }
@@ -685,16 +777,31 @@ mod tests {
         assert!(entry.release.contains("Amazon Linux"));
 
         let minimal = vault.resolve_image(Some("minimal")).await.unwrap();
-        assert!(minimal.release.contains("Amazon Linux"));
+        assert!(minimal.release.contains("Minimal"));
 
-        let k612 = vault.resolve_image(Some("al2023-k6.12")).await.unwrap();
-        assert!(k612.release.contains("Amazon Linux"));
+        let ubuntu = vault.resolve_image(Some("ubuntu")).await.unwrap();
+        assert_eq!(ubuntu.os, "Ubuntu");
+        assert!(ubuntu.release.contains("Ubuntu 24.04"));
+
+        let debian = vault.resolve_image(Some("debian")).await.unwrap();
+        assert_eq!(debian.os, "Debian");
+        assert!(debian.release.contains("Debian 12"));
+
+        let rocky = vault.resolve_image(Some("rocky")).await.unwrap();
+        assert_eq!(rocky.os, "Rocky Linux");
+
+        let fedora = vault.resolve_image(Some("fedora")).await.unwrap();
+        assert_eq!(fedora.os, "Fedora");
 
         let custom = vault
             .resolve_image(Some("https://example.com/custom.qcow2"))
             .await
             .unwrap();
         assert_eq!(custom.remote, "custom");
+
+        // Verify that completely nonexistent aliases fail
+        let nonexistent = vault.resolve_image(Some("nonexistent-os-xyz")).await;
+        assert!(nonexistent.is_err());
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

@@ -40,7 +40,7 @@ pub fn generate_al2023_seed_iso(output_iso_path: &Path, cfg: &CloudInitConfig<'_
         cfg.instance_id, cfg.hostname
     );
 
-    // 2. vendor-data tailored for Amazon Linux 2023 (dnf, ec2-user, xfs_growfs, sshd)
+    // 2. vendor-data tailored for multi-distro cloud-init (Amazon Linux, Rocky, Fedora, Ubuntu, Debian)
     let vendor_data = format!(
         r#"#cloud-config
 growpart:
@@ -51,9 +51,9 @@ resize_rootfs: true
 users:
   - default
   - name: {user}
-    gecos: Amazon Linux 2023 ec2pass User
+    gecos: ec2pass Cloud User
     sudo: ALL=(ALL) NOPASSWD:ALL
-    groups: [wheel, adm, systemd-journal]
+    groups: [wheel, sudo, adm, systemd-journal]
     shell: /bin/bash
     lock_passwd: true
     ssh_authorized_keys:
@@ -61,7 +61,7 @@ users:
 ssh_pwauth: false
 package_update: false
 runcmd:
-  - [ sh, -c, "restorecon -R /home/{user}/.ssh || true" ]
+  - [ sh, -c, "restorecon -R /home/{user}/.ssh 2>/dev/null || true" ]
 "#,
         user = cfg.default_user,
         pub_key = cfg.ssh_public_key.trim()
@@ -119,5 +119,25 @@ runcmd:
 
         let invalid = "packages: [unclosed_list";
         assert!(validate_cloud_init_yaml(invalid).is_err());
+    }
+
+    #[test]
+    fn test_cloud_init_vendor_data_has_multi_distro_groups() {
+        let tmp_iso = std::env::temp_dir().join(format!("seed_test_{}.iso", rand::random::<u32>()));
+        let cfg = CloudInitConfig {
+            instance_id: "i-test",
+            hostname: "test-host",
+            default_user: "ec2-user",
+            ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey",
+            user_data_yaml: None,
+        };
+        assert!(generate_al2023_seed_iso(&tmp_iso, &cfg).is_ok());
+
+        let iso_bytes = std::fs::read(&tmp_iso).unwrap();
+        let iso_str = String::from_utf8_lossy(&iso_bytes);
+        assert!(iso_str.contains("wheel"));
+        assert!(iso_str.contains("sudo"));
+
+        let _ = std::fs::remove_file(&tmp_iso);
     }
 }

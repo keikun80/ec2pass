@@ -21,7 +21,7 @@ use ec2ps_protocol::{
     CommandAlias, InstanceDetails, InstanceState, MountSpec, NetworkInterfaceInfo, RpcRequest,
     RpcResponse, RpcStreamFrame,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -49,6 +49,35 @@ struct DaemonContext {
     vault: ImageVault,
     ssh: SshManager,
     driver: Box<dyn VirtualMachineDriver>,
+    shutdown_cancellers: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    auth_token: String,
+}
+
+#[cfg(unix)]
+fn is_process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    unsafe {
+        let res = libc::kill(pid as i32, 0);
+        res == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+}
+
+#[cfg(windows)]
+fn is_process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    let out = std::process::Command::new("cmd")
+        .args(["/c", &format!("tasklist /FI \"PID eq {}\" /NH", pid)])
+        .output();
+    if let Ok(o) = out {
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        stdout.contains(&pid.to_string())
+    } else {
+        false
+    }
 }
 
 #[tokio::main]
@@ -75,9 +104,7 @@ async fn main() -> Result<()> {
     let mut store = StateStore::load_or_create(&data_dir)?;
     for rec in store.data.instances.values_mut() {
         if rec.details.state == InstanceState::Running {
-            let is_alive = rec
-                .pid
-                .is_some_and(|p| std::path::Path::new(&format!("/proc/{}", p)).exists());
+            let is_alive = rec.pid.is_some_and(is_process_alive);
             if !is_alive {
                 rec.details.state = InstanceState::Stopped;
                 rec.pid = None;
@@ -109,12 +136,38 @@ async fn main() -> Result<()> {
         data_dir
     );
 
+    let auth_token_path = data_dir.join("auth_token");
+    let auth_token = if auth_token_path.exists() {
+        std::fs::read_to_string(&auth_token_path)
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    } else {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let token = format!("{:016x}{:08x}", now, std::process::id());
+        let _ = std::fs::write(&auth_token_path, &token);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(mut perms) = std::fs::metadata(&auth_token_path).map(|m| m.permissions()) {
+                perms.set_mode(0o600);
+                let _ = std::fs::set_permissions(&auth_token_path, perms);
+            }
+        }
+        token
+    };
+
     let ctx = Arc::new(DaemonContext {
         data_dir,
         store: Mutex::new(store),
         vault,
         ssh,
         driver,
+        shutdown_cancellers: Mutex::new(HashMap::new()),
+        auth_token,
     });
 
     if bind_addr.starts_with(r"\\.\pipe\") || bind_addr.starts_with("npipe:") {
@@ -245,6 +298,7 @@ where
 {
     let (reader, mut writer) = tokio::io::split(socket);
     let mut lines = BufReader::new(reader).lines();
+    let mut session_authenticated = false;
 
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
@@ -264,6 +318,86 @@ where
                 continue;
             }
         };
+
+        // Check if authentication is enabled
+        let auth_required = {
+            let store = ctx.store.lock().await;
+            store
+                .data
+                .settings
+                .get("local.passphrase")
+                .map(|v| v == "true")
+                .unwrap_or(false)
+        };
+
+        if auth_required && !session_authenticated {
+            match &req {
+                RpcRequest::Ping | RpcRequest::Version => {}
+                RpcRequest::Authenticate { passphrase } => {
+                    let store = ctx.store.lock().await;
+                    let valid = if let Some(secret) = store.data.settings.get("local._passphrase_secret") {
+                        !secret.is_empty() && (secret == passphrase || &ctx.auth_token == passphrase)
+                    } else {
+                        &ctx.auth_token == passphrase
+                    };
+                    if valid {
+                        session_authenticated = true;
+                        send_frame(
+                            &mut writer,
+                            &RpcStreamFrame::Response(Box::new(RpcResponse::OkMessage(
+                                "Client authenticated successfully with ec2passd.".to_string(),
+                            ))),
+                        )
+                        .await?;
+                        continue;
+                    } else {
+                        send_frame(
+                            &mut writer,
+                            &RpcStreamFrame::Response(Box::new(RpcResponse::Error(
+                                "Passphrase does not match local.passphrase".to_string(),
+                            ))),
+                        )
+                        .await?;
+                        continue;
+                    }
+                }
+                _ => {
+                    send_frame(
+                        &mut writer,
+                        &RpcStreamFrame::Response(Box::new(RpcResponse::Error(
+                            "Unauthorized: authentication required. Run 'ec2pass authenticate' with the passphrase.".to_string(),
+                        ))),
+                    )
+                    .await?;
+                    continue;
+                }
+            }
+        }
+
+        if let RpcRequest::Authenticate { ref passphrase } = req {
+            let store = ctx.store.lock().await;
+            if let Some(secret) = store.data.settings.get("local._passphrase_secret") {
+                if !secret.is_empty() && secret != passphrase && &ctx.auth_token != passphrase {
+                    send_frame(
+                        &mut writer,
+                        &RpcStreamFrame::Response(Box::new(RpcResponse::Error(
+                            "Passphrase does not match local.passphrase".to_string(),
+                        ))),
+                    )
+                    .await?;
+                    continue;
+                }
+            }
+            session_authenticated = true;
+            send_frame(
+                &mut writer,
+                &RpcStreamFrame::Response(Box::new(RpcResponse::OkMessage(
+                    "Client authenticated successfully with ec2passd.".to_string(),
+                ))),
+            )
+            .await?;
+            continue;
+        }
 
         let resp = match dispatch_request(req, &ctx, &mut writer).await {
             Ok(r) => r,
@@ -296,7 +430,7 @@ where
         RpcRequest::Authenticate { passphrase } => {
             let store = ctx.store.lock().await;
             if let Some(secret) = store.data.settings.get("local._passphrase_secret") {
-                if secret != &passphrase {
+                if !secret.is_empty() && secret != &passphrase && ctx.auth_token != passphrase {
                     bail!("Passphrase does not match local.passphrase");
                 }
             }
@@ -307,7 +441,7 @@ where
 
         RpcRequest::Find {
             search_string,
-            show_unsupported: _,
+            show_unsupported,
             show_versions,
             force_update,
         } => {
@@ -315,6 +449,9 @@ where
                 .vault
                 .fetch_catalog_extended(show_versions, force_update)
                 .await;
+            if !show_unsupported && search_string.is_none() {
+                entries.retain(|e| !e.description.to_lowercase().contains("legacy"));
+            }
             if let Some(q) = search_string {
                 let q_low = q.to_lowercase();
                 entries.retain(|e| {
@@ -335,9 +472,9 @@ where
             memory_bytes,
             disk_bytes,
             cloud_init_yaml,
-            networks: _,
+            networks,
             mounts,
-            timeout_secs: _,
+            timeout_secs: req_timeout,
         } => {
             if let Some(ref yaml) = cloud_init_yaml {
                 validate_cloud_init_yaml(yaml)?;
@@ -501,6 +638,7 @@ where
                 pid: None,
                 mac_address: mac_addr,
                 cloud_init_yaml,
+                networks,
             };
 
             // 5. Boot VM with QEMU Driver
@@ -526,7 +664,7 @@ where
             .await?;
 
             let start_wait = std::time::Instant::now();
-            let timeout_secs = 120u64;
+            let timeout_secs = if req_timeout == 0 { 300 } else { req_timeout };
             let mut is_ready = false;
 
             while start_wait.elapsed() < std::time::Duration::from_secs(timeout_secs) {
@@ -606,10 +744,11 @@ where
             record.details.state = InstanceState::Running;
             let launched_details = record.details.clone();
 
-            for (tgt, m) in &mount_map {
+            for (idx, (tgt, m)) in mount_map.iter().enumerate() {
+                let tag = format!("ec2ps_mount_{}", idx);
                 let _ = ctx
                     .ssh
-                    .sync_mount(&instance_dir, ssh_port, "ec2-user", &m.source_path, tgt)
+                    .sync_mount(&instance_dir, ssh_port, "ec2-user", &m.source_path, tgt, Some(&tag))
                     .await;
             }
 
@@ -648,9 +787,7 @@ where
                         name
                     );
                 }
-                let is_alive = rec
-                    .pid
-                    .is_some_and(|p| std::path::Path::new(&format!("/proc/{}", p)).exists());
+                let is_alive = rec.pid.is_some_and(is_process_alive);
                 if rec.details.state == InstanceState::Suspended {
                     ctx.driver.resume_vm(rec).await?;
                     let _ = ctx
@@ -676,8 +813,32 @@ where
                             60,
                         )
                         .await;
+
+                    // Automatically grow partition and filesystem if disk was resized while stopped
+                    let grow_cmd = vec![
+                        "sudo growpart /dev/vda 1 2>/dev/null || sudo growpart /dev/xvda 1 2>/dev/null || sudo growpart /dev/sda 1 2>/dev/null || true".to_string(),
+                        "sudo xfs_growfs / 2>/dev/null || sudo resize2fs $(findmnt -n -o SOURCE / 2>/dev/null) 2>/dev/null || true".to_string(),
+                    ];
+                    let _ = ctx
+                        .ssh
+                        .exec_command(
+                            &name,
+                            &rec.instance_dir,
+                            rec.details.ssh_port,
+                            &rec.details.ssh_user,
+                            &grow_cmd,
+                            None,
+                        )
+                        .await;
                 }
                 rec.details.state = InstanceState::Running;
+                for (idx, (tgt, m)) in rec.details.mounts.iter().enumerate() {
+                    let tag = format!("ec2ps_mount_{}", idx);
+                    let _ = ctx
+                        .ssh
+                        .sync_mount(&rec.instance_dir, rec.details.ssh_port, &rec.details.ssh_user, &m.source_path, tgt, Some(&tag))
+                        .await;
+                }
                 started.push(rec.details.clone());
             }
             store.save()?;
@@ -702,12 +863,44 @@ where
                     .get_mut(&name)
                     .with_context(|| format!("Instance '{}' does not exist", name))?;
                 if cancel_shutdown {
+                    if let Some(tx) = ctx.shutdown_cancellers.lock().await.remove(&name) {
+                        let _ = tx.send(());
+                    }
                     if rec.details.state == InstanceState::DelayedShutdown {
                         rec.details.state = InstanceState::Running;
                     }
                 } else if let Some(mins) = delay_mins {
                     if mins > 0 {
+                        // Cancel any previous pending timer
+                        if let Some(tx) = ctx.shutdown_cancellers.lock().await.remove(&name) {
+                            let _ = tx.send(());
+                        }
+                        let (tx, rx) = tokio::sync::oneshot::channel();
+                        ctx.shutdown_cancellers.lock().await.insert(name.clone(), tx);
                         rec.details.state = InstanceState::DelayedShutdown;
+
+                        let ctx_bg = Arc::clone(&ctx);
+                        let name_bg = name.clone();
+                        tokio::spawn(async move {
+                            tokio::select! {
+                                _ = tokio::time::sleep(std::time::Duration::from_secs(mins as u64 * 60)) => {
+                                    ctx_bg.shutdown_cancellers.lock().await.remove(&name_bg);
+                                    let mut st = ctx_bg.store.lock().await;
+                                    if let Some(instance_rec) = st.data.instances.get_mut(&name_bg) {
+                                        if instance_rec.details.state == InstanceState::DelayedShutdown {
+                                            tracing::info!("Delayed shutdown timer fired for '{}'. Stopping VM...", name_bg);
+                                            let _ = ctx_bg.driver.stop_vm(instance_rec, force).await;
+                                            instance_rec.details.state = InstanceState::Stopped;
+                                            instance_rec.pid = None;
+                                            let _ = st.save();
+                                        }
+                                    }
+                                }
+                                _ = rx => {
+                                    tracing::info!("Delayed shutdown cancelled for '{}'", name_bg);
+                                }
+                            }
+                        });
                     } else {
                         ctx.driver.stop_vm(rec, force).await?;
                         rec.details.state = InstanceState::Stopped;
@@ -850,10 +1043,12 @@ where
             let mut store = ctx.store.lock().await;
             let mut list = Vec::with_capacity(store.data.instances.len());
             for rec in store.data.instances.values_mut() {
-                if let Ok(meta) = std::fs::metadata(&rec.disk_path) {
-                    rec.details.disk_usage_bytes = meta.len();
-                }
-                if rec.details.state != InstanceState::Running {
+                if rec.details.state == InstanceState::Running {
+                    collect_instance_metrics(&ctx.ssh, rec).await;
+                } else {
+                    if let Ok(meta) = std::fs::metadata(&rec.disk_path) {
+                        rec.details.disk_usage_bytes = meta.len();
+                    }
                     rec.details.load = vec![0.0, 0.0, 0.0];
                     rec.details.memory_usage_bytes = 0;
                 }
@@ -981,7 +1176,7 @@ where
                 .trim_start_matches(r"\\?\")
                 .to_string();
 
-            let (is_running, instance_dir, ssh_port, ssh_user) = {
+            let (is_running, instance_dir, ssh_port, ssh_user, tag) = {
                 let mut store = ctx.store.lock().await;
                 if !store.data.instances.contains_key(&instance) {
                     bail!("No such instance: '{}'", instance);
@@ -996,17 +1191,19 @@ where
                     mount_type,
                 )?;
                 let rec = &store.data.instances[&instance];
+                let mount_idx = rec.details.mounts.len().saturating_sub(1);
                 (
                     rec.details.state == InstanceState::Running,
                     rec.instance_dir.clone(),
                     rec.details.ssh_port,
                     rec.details.ssh_user.clone(),
+                    format!("ec2ps_mount_{}", mount_idx),
                 )
             };
 
             if is_running {
                 ctx.ssh
-                    .sync_mount(&instance_dir, ssh_port, &ssh_user, &abs_src, &target_path)
+                    .sync_mount(&instance_dir, ssh_port, &ssh_user, &abs_src, &target_path, Some(&tag))
                     .await?;
             }
             Ok(RpcResponse::OkMessage("Mounted".to_string()))
@@ -1039,10 +1236,15 @@ where
 
             if is_running {
                 for target in targets_to_clean {
-                    let clean_cmd = vec![format!(
-                        "sudo rm -rf '{0}'/* '{0}'/.[!.]* 2>/dev/null || true",
-                        target
-                    )];
+                    let unmount_cmd = vec![
+                        // If the target is an active mountpoint, unmount it cleanly
+                        format!(
+                            "if mountpoint -q '{0}' 2>/dev/null; then sudo umount -f '{0}' 2>/dev/null || sudo umount -l '{0}' 2>/dev/null || true; fi",
+                            target
+                        ),
+                        // Only remove the mountpoint directory if it is completely empty; do not delete any files
+                        format!("sudo rmdir '{0}' 2>/dev/null || true", target),
+                    ];
                     let _ = ctx
                         .ssh
                         .exec_command(
@@ -1050,7 +1252,7 @@ where
                             &instance_dir,
                             ssh_port,
                             &ssh_user,
-                            &clean_cmd,
+                            &unmount_cmd,
                             None,
                         )
                         .await;
@@ -1068,48 +1270,117 @@ where
             recursive,
             parents,
         } => {
-            // Find which instance is referenced in either sources or destination (`instance:path`)
-            let find_inst = |s: &str| -> Option<String> {
-                if let Some((inst, _path)) = s.split_once(':') {
-                    if inst.len() > 1 {
-                        return Some(inst.to_string());
-                    }
-                }
-                None
-            };
-
-            let inst_name = find_inst(&destination)
-                .or_else(|| sources.iter().find_map(|s| find_inst(s)))
-                .context(
-                    "Transfer requires at least one instance path in the form <instance>:<path>",
-                )?;
-
-            let (instance_dir, ssh_port, ssh_user) = {
-                let store = ctx.store.lock().await;
-                let rec = store
-                    .data
-                    .instances
-                    .get(&inst_name)
-                    .with_context(|| format!("Instance '{}' does not exist", inst_name))?;
-                (
-                    rec.instance_dir.clone(),
-                    rec.details.ssh_port,
-                    rec.details.ssh_user.clone(),
-                )
-            };
+            let dst_endpoint = parse_endpoint(&destination);
 
             for src in &sources {
-                ctx.ssh
-                    .transfer_path(
-                        &instance_dir,
-                        ssh_port,
-                        &ssh_user,
-                        src,
-                        &destination,
-                        recursive,
-                        parents,
-                    )
-                    .await?;
+                let src_endpoint = parse_endpoint(src);
+
+                match (src_endpoint, dst_endpoint) {
+                    (Some((src_inst, src_path)), Some((dst_inst, dst_path))) => {
+                        // Instance-to-Instance transfer via temporary host staging
+                        let (src_dir, src_port, src_user, dst_dir, dst_port, dst_user) = {
+                            let store = ctx.store.lock().await;
+                            let s_rec = store
+                                .data
+                                .instances
+                                .get(src_inst)
+                                .with_context(|| format!("Source instance '{}' does not exist", src_inst))?;
+                            let d_rec = store
+                                .data
+                                .instances
+                                .get(dst_inst)
+                                .with_context(|| format!("Destination instance '{}' does not exist", dst_inst))?;
+                            (
+                                s_rec.instance_dir.clone(),
+                                s_rec.details.ssh_port,
+                                s_rec.details.ssh_user.clone(),
+                                d_rec.instance_dir.clone(),
+                                d_rec.details.ssh_port,
+                                d_rec.details.ssh_user.clone(),
+                            )
+                        };
+
+                        let tmp_dir = std::env::temp_dir().join(format!(
+                            "ec2ps_xfer_{}",
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_nanos()
+                        ));
+                        std::fs::create_dir_all(&tmp_dir)?;
+
+                        let file_name = std::path::Path::new(src_path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("transfer.tmp");
+                        let host_tmp_file = tmp_dir.join(file_name);
+
+                        // 1. Transfer from source guest to host staging
+                        let src_spec = format!("{}:{}", src_inst, src_path);
+                        ctx.ssh
+                            .transfer_path(
+                                &src_dir,
+                                src_port,
+                                &src_user,
+                                &src_spec,
+                                &host_tmp_file.to_string_lossy(),
+                                recursive,
+                                parents,
+                            )
+                            .await?;
+
+                        // 2. Transfer from host staging to destination guest
+                        let dst_spec = format!("{}:{}", dst_inst, dst_path);
+                        let res = ctx
+                            .ssh
+                            .transfer_path(
+                                &dst_dir,
+                                dst_port,
+                                &dst_user,
+                                &host_tmp_file.to_string_lossy(),
+                                &dst_spec,
+                                recursive,
+                                parents,
+                            )
+                            .await;
+
+                        let _ = std::fs::remove_dir_all(&tmp_dir);
+                        res?;
+                    }
+                    (Some((src_inst, _)), None) => {
+                        // Guest-to-Host transfer
+                        let (dir, port, user) = {
+                            let store = ctx.store.lock().await;
+                            let rec = store
+                                .data
+                                .instances
+                                .get(src_inst)
+                                .with_context(|| format!("Source instance '{}' does not exist", src_inst))?;
+                            (rec.instance_dir.clone(), rec.details.ssh_port, rec.details.ssh_user.clone())
+                        };
+                        ctx.ssh
+                            .transfer_path(&dir, port, &user, src, &destination, recursive, parents)
+                            .await?;
+                    }
+                    (None, Some((dst_inst, _))) => {
+                        // Host-to-Guest transfer
+                        let (dir, port, user) = {
+                            let store = ctx.store.lock().await;
+                            let rec = store
+                                .data
+                                .instances
+                                .get(dst_inst)
+                                .with_context(|| format!("Destination instance '{}' does not exist", dst_inst))?;
+                            (rec.instance_dir.clone(), rec.details.ssh_port, rec.details.ssh_user.clone())
+                        };
+                        ctx.ssh
+                            .transfer_path(&dir, port, &user, src, &destination, recursive, parents)
+                            .await?;
+                    }
+                    (None, None) => {
+                        bail!("Transfer requires at least one instance path in the form <instance>:<path>");
+                    }
+                }
             }
             Ok(RpcResponse::OkMessage("Transfer completed".to_string()))
         }
@@ -1148,10 +1419,10 @@ where
         RpcRequest::Restore {
             instance,
             snapshot_name,
-            destructive: _,
+            destructive,
         } => {
-            let mut store = ctx.store.lock().await;
-            let (is_running, qmp_port, disk_path) = {
+            let (is_running, qmp_port, disk_path, rec_clone) = {
+                let store = ctx.store.lock().await;
                 let rec = store
                     .data
                     .instances
@@ -1161,13 +1432,48 @@ where
                     rec.details.state == InstanceState::Running,
                     rec.qmp_port,
                     rec.disk_path.clone(),
+                    rec.clone(),
                 )
             };
-            let snap = store.restore_snapshot(&instance, &snapshot_name)?;
+            let snap = {
+                let mut store = ctx.store.lock().await;
+                store.restore_snapshot(&instance, &snapshot_name, destructive)?
+            };
+
             if is_running {
-                ctx.driver
+                let live_res = ctx
+                    .driver
                     .restore_live_snapshot(qmp_port, &disk_path, &snap.name)
-                    .await?;
+                    .await;
+                if let Err(e) = live_res {
+                    tracing::info!(
+                        "Live QMP restore unavailable ({:?}); cleanly restarting instance to apply disk snapshot...",
+                        e
+                    );
+                    ctx.driver.stop_vm(&rec_clone, true).await?;
+                    ctx.driver
+                        .restore_disk_snapshot(&disk_path, &snap.name)
+                        .await?;
+                    let pid = ctx.driver.start_vm(&rec_clone).await?;
+                    {
+                        let mut store = ctx.store.lock().await;
+                        if let Some(r) = store.data.instances.get_mut(&instance) {
+                            r.pid = Some(pid);
+                            r.details.state = InstanceState::Running;
+                        }
+                        store.save()?;
+                    }
+                    let _ = ctx
+                        .ssh
+                        .wait_until_ready(
+                            &instance,
+                            &rec_clone.instance_dir,
+                            rec_clone.details.ssh_port,
+                            &rec_clone.details.ssh_user,
+                            60,
+                        )
+                        .await;
+                }
             } else {
                 ctx.driver
                     .restore_disk_snapshot(&disk_path, &snap.name)
@@ -1205,12 +1511,18 @@ where
             let dst_dir = ctx.data_dir.join("instances").join(&dst_name);
             copy_dir_recursive(&src_rec.instance_dir, &dst_dir)?;
 
+            // Clean up stale runtime logs/sockets in clone
+            let _ = std::fs::remove_file(dst_dir.join("console.log"));
+            let _ = std::fs::remove_file(dst_dir.join("qmp.sock"));
+
             let (ssh_port, qmp_port) = store.allocate_ports();
             let guest_ip = store.allocate_guest_ip();
             let mac = store.allocate_mac();
 
             let mut dst_rec = src_rec.clone();
             dst_rec.details.name = dst_name.clone();
+            dst_rec.details.state = InstanceState::Stopped;
+            dst_rec.pid = None;
             dst_rec.details.ipv4 = vec![guest_ip];
             dst_rec.details.ssh_port = ssh_port;
             dst_rec.details.snapshots.clear();
@@ -1220,6 +1532,19 @@ where
             dst_rec.seed_iso_path = dst_dir.join("seed.iso");
             dst_rec.qmp_port = qmp_port;
             dst_rec.mac_address = mac;
+
+            // Regenerate cloud-init seed.iso with new instance-id and hostname to prevent cloud-init conflict
+            let pub_key = ctx.ssh.public_key_string()?;
+            generate_al2023_seed_iso(
+                &dst_rec.seed_iso_path,
+                &CloudInitConfig {
+                    instance_id: &format!("i-al2023-{}", dst_name),
+                    hostname: &dst_name,
+                    default_user: "ec2-user",
+                    ssh_public_key: &pub_key,
+                    user_data_yaml: dst_rec.cloud_init_yaml.as_deref(),
+                },
+            )?;
 
             let details = dst_rec.details.clone();
             store.data.instances.insert(dst_name, dst_rec);
@@ -1269,6 +1594,44 @@ where
         }
 
         RpcRequest::Set { key, value } => {
+            let parts: Vec<&str> = key.split('.').collect();
+            if parts.len() == 3 && parts[0] == "local" && parts[2] == "disk" {
+                let inst_name = parts[1];
+                let (disk_path, state, current_bytes) = {
+                    let store = ctx.store.lock().await;
+                    let rec = store
+                        .data
+                        .instances
+                        .get(inst_name)
+                        .with_context(|| format!("No such instance: '{}'", inst_name))?;
+                    (
+                        rec.disk_path.clone(),
+                        rec.details.state,
+                        rec.details.disk_total_bytes,
+                    )
+                };
+
+                if state != InstanceState::Stopped {
+                    bail!(
+                        "Cannot resize instance '{}' while it is {}. Please stop the instance first.",
+                        inst_name,
+                        state
+                    );
+                }
+
+                let new_bytes = ec2ps_protocol::parse_byte_size(&value)
+                    .context("Invalid disk size format")?;
+                if new_bytes < current_bytes {
+                    bail!(
+                        "Disk size can only be increased (current: {}, requested: {})",
+                        ec2ps_protocol::format_bytes(current_bytes),
+                        ec2ps_protocol::format_bytes(new_bytes)
+                    );
+                }
+
+                ctx.driver.resize_disk(&disk_path, new_bytes).await?;
+            }
+
             let mut store = ctx.store.lock().await;
             store.set_setting(&key, &value)?;
             Ok(RpcResponse::OkMessage(format!("{}={}", key, value)))
@@ -1343,7 +1706,7 @@ async fn collect_instance_metrics(
     let probe_cmd = vec![
         "sh".to_string(),
         "-c".to_string(),
-        "cat /proc/loadavg 2>/dev/null; awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{print (t-a)*1024}' /proc/meminfo 2>/dev/null".to_string(),
+        "cat /proc/loadavg 2>/dev/null; awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{print (t-a)*1024}' /proc/meminfo 2>/dev/null; hostname -I 2>/dev/null".to_string(),
     ];
 
     if let Ok(Ok((stdout, _stderr, code))) = tokio::time::timeout(
@@ -1374,6 +1737,16 @@ async fn collect_instance_metrics(
             if let Some(mem_line) = lines.get(1) {
                 if let Ok(mem_bytes) = mem_line.trim().parse::<u64>() {
                     rec.details.memory_usage_bytes = mem_bytes;
+                }
+            }
+            if let Some(ip_line) = lines.get(2) {
+                let ips: Vec<String> = ip_line
+                    .split_whitespace()
+                    .filter(|ip| !ip.starts_with("127."))
+                    .map(|s| s.to_string())
+                    .collect();
+                if !ips.is_empty() {
+                    rec.details.ipv4 = ips;
                 }
             }
         }
@@ -1427,7 +1800,39 @@ async fn detect_host_networks() -> Vec<NetworkInterfaceInfo> {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("ifconfig").arg("-l").output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for ifname in stdout.split_whitespace() {
+                    if ifname.starts_with("lo")
+                        || ifname.starts_with("gif")
+                        || ifname.starts_with("stf")
+                        || ifname.starts_with("awdl")
+                        || ifname.starts_with("llw")
+                        || ifname.starts_with("ap")
+                    {
+                        continue;
+                    }
+                    let net_type = if ifname.starts_with("bridge") {
+                        "bridge"
+                    } else if ifname.starts_with("utun") {
+                        "tunnel"
+                    } else {
+                        "ethernet"
+                    };
+                    networks.push(NetworkInterfaceInfo {
+                        name: ifname.to_string(),
+                        net_type: net_type.to_string(),
+                        description: format!("Host Network Interface {}", ifname),
+                    });
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
     {
         if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
             for entry in entries.flatten() {
@@ -1458,11 +1863,11 @@ async fn detect_host_networks() -> Vec<NetworkInterfaceInfo> {
         }
     }
 
-    // Always include ec2pass user-mode NAT virtual network
+    // Include ec2pass user-mode NAT virtual network
     networks.push(NetworkInterfaceInfo {
-        name: "ec2psbr0".to_string(),
+        name: "user-nat".to_string(),
         net_type: "user-nat".to_string(),
-        description: "ec2pass User-mode NAT Virtual Network (10.23.104.0/24)".to_string(),
+        description: "ec2pass User-mode NAT Virtual Network (10.0.2.0/24 with SSH port-forwarding)".to_string(),
     });
 
     networks
@@ -1487,4 +1892,71 @@ fn resolve_target_names(
         return Ok(vec![primary.to_string()]);
     }
     Ok(names.to_vec())
+}
+
+fn parse_endpoint(spec: &str) -> Option<(&str, &str)> {
+    if let Some((inst, path)) = spec.split_once(':') {
+        if inst.len() == 1 && inst.chars().next().unwrap().is_ascii_alphabetic() {
+            return None;
+        }
+        if !inst.contains('/') && !inst.contains('\\') && !inst.is_empty() {
+            return Some((inst, path));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_endpoint() {
+        assert_eq!(parse_endpoint("inst1:/var/log"), Some(("inst1", "/var/log")));
+        assert_eq!(parse_endpoint("my-vm:test.txt"), Some(("my-vm", "test.txt")));
+        assert_eq!(parse_endpoint("C:\\Users\\user\\file.txt"), None);
+        assert_eq!(parse_endpoint("d:/data/file.txt"), None);
+        assert_eq!(parse_endpoint("/local/path/to/file"), None);
+        assert_eq!(parse_endpoint("relative/path/to/file"), None);
+    }
+
+    #[test]
+    fn test_is_process_alive() {
+        // Current process must be alive
+        let current_pid = std::process::id();
+        assert!(is_process_alive(current_pid));
+
+        // Non-existent PID must be dead
+        assert!(!is_process_alive(99_999_999));
+        assert!(!is_process_alive(0));
+    }
+
+    #[tokio::test]
+    async fn test_detect_host_networks_has_interfaces() {
+        let nets = detect_host_networks().await;
+        assert!(!nets.is_empty());
+        // Always includes user-nat
+        assert!(nets.iter().any(|n| n.name == "user-nat"));
+    }
+
+    #[test]
+    fn test_resolve_target_names_with_custom_primary() {
+        let tmp = std::env::temp_dir().join(format!("ec2ps_target_test_{}", rand::random::<u32>()));
+        let mut store = StateStore::load_or_create(&tmp).unwrap();
+
+        // Default primary
+        let default_targets = resolve_target_names(&store, &[], false, "primary").unwrap();
+        assert_eq!(default_targets, vec!["primary".to_string()]);
+
+        // Explicit names override default
+        let explicit_targets = resolve_target_names(&store, &["vm1".to_string(), "vm2".to_string()], false, "primary").unwrap();
+        assert_eq!(explicit_targets, vec!["vm1".to_string(), "vm2".to_string()]);
+
+        // Custom primary setting
+        store.set_setting("client.primary-name", "my-node").unwrap();
+        let custom_targets = resolve_target_names(&store, &[], false, "primary").unwrap();
+        assert_eq!(custom_targets, vec!["my-node".to_string()]);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

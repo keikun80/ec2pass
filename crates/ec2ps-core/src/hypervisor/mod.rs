@@ -28,6 +28,9 @@ pub trait VirtualMachineDriver: Send + Sync {
         disk_bytes: u64,
     ) -> Result<()>;
 
+    /// Resizes the root/overlay disk to the new byte size.
+    async fn resize_disk(&self, disk_path: &Path, new_bytes: u64) -> Result<()>;
+
     /// Boots the virtual machine process and returns its host PID.
     async fn start_vm(&self, rec: &InstanceRecord) -> Result<u32>;
 

@@ -356,6 +356,8 @@ dependencies = [
  "ec2ps-core",
  "ec2ps-iso9660",
  "ec2ps-protocol",
+ "libc",
+ "rand 0.8.8",
  "serde",
  "serde_json",
  "tokio",

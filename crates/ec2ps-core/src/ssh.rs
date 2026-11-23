@@ -251,35 +251,37 @@ impl SshManager {
         parents: bool,
     ) -> Result<()> {
         if parents {
-            if let Some((_inst, guest_path)) = dst.split_once(':') {
-                if let Some(parent) = Path::new(guest_path).parent() {
-                    let p_str = parent.to_string_lossy();
-                    if !p_str.is_empty() && p_str != "/" {
-                        let _ = self
-                            .exec_command(
-                                "instance",
-                                instance_dir,
-                                ssh_port,
-                                ssh_user,
-                                &[format!(
-                                    "sudo mkdir -p '{}' && sudo chown -R {}:{} '{}'",
-                                    p_str, ssh_user, ssh_user, p_str
-                                )],
-                                None,
-                            )
-                            .await;
+            if let Some((inst, guest_path)) = dst.split_once(':') {
+                if inst.len() > 1 && !inst.contains('/') && !inst.contains('\\') {
+                    if let Some(parent) = Path::new(guest_path).parent() {
+                        let p_str = parent.to_string_lossy();
+                        if !p_str.is_empty() && p_str != "/" {
+                            let _ = self
+                                .exec_command(
+                                    "instance",
+                                    instance_dir,
+                                    ssh_port,
+                                    ssh_user,
+                                    &[format!(
+                                        "sudo mkdir -p '{}' && sudo chown -R {}:{} '{}'",
+                                        p_str, ssh_user, ssh_user, p_str
+                                    )],
+                                    None,
+                                )
+                                .await;
+                        }
                     }
-                }
-            } else if !dst.contains(':') {
-                if let Some(parent) = Path::new(dst).parent() {
+                } else if let Some(parent) = Path::new(dst).parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
+            } else if let Some(parent) = Path::new(dst).parent() {
+                let _ = std::fs::create_dir_all(parent);
             }
         }
 
         let format_scp_endpoint = |spec: &str| -> String {
             if let Some((inst, guest_path)) = spec.split_once(':') {
-                if inst.len() > 1 {
+                if inst.len() > 1 && !inst.contains('/') && !inst.contains('\\') {
                     return format!("{}@127.0.0.1:{}", ssh_user, guest_path);
                 }
             }
@@ -310,7 +312,8 @@ impl SshManager {
         Ok(())
     }
 
-    /// Synchronizes a host directory into a guest directory mount path.
+    /// Synchronizes or mounts a host directory into a guest directory mount path.
+    /// Uses 9p (virtfs) if an active mount_tag is provided, falling back to scp transfer.
     pub async fn sync_mount(
         &self,
         instance_dir: &Path,
@@ -318,6 +321,7 @@ impl SshManager {
         ssh_user: &str,
         host_src: &str,
         guest_target: &str,
+        mount_tag: Option<&str>,
     ) -> Result<()> {
         let src_path = Path::new(host_src);
         if !src_path.exists() {
@@ -326,8 +330,8 @@ impl SshManager {
 
         // 1. Ensure target directory exists in guest with proper ownership and write permissions
         let mkdir_cmd = vec![format!(
-            "sudo mkdir -p '{}' && sudo chown -R {}:{} '{}' && sudo chmod -R u+w '{}'",
-            guest_target, ssh_user, ssh_user, guest_target, guest_target
+            "sudo mkdir -p '{0}' && sudo chown -R {1}:{1} '{0}' && sudo chmod -R u+w '{0}'",
+            guest_target, ssh_user
         )];
         self.exec_command(
             "instance",
@@ -340,39 +344,55 @@ impl SshManager {
         .await
         .context("Failed to initialize target mount directory in guest")?;
 
-        // 2. Transfer host directory contents into guest target directory
-        let scp_src = if src_path.is_dir() {
-            format!("{}/.", host_src.trim_end_matches('/'))
-        } else {
-            host_src.to_string()
-        };
+        // 2. If a mount_tag is supplied, attempt kernel 9p mount
+        let mut mounted_9p = false;
+        if let Some(tag) = mount_tag {
+            let mnt_cmd = vec![format!(
+                "sudo modprobe 9pnet_virtio 2>/dev/null; sudo modprobe 9p 2>/dev/null; if ! mountpoint -q '{0}'; then sudo mount -t 9p -o trans=virtio,version=9p2000.L,access=any,msize=1048576 '{1}' '{0}' 2>/dev/null || true; fi; mountpoint -q '{0}'",
+                guest_target, tag
+            )];
+            if let Ok((_out, _err, code)) = self.exec_command("instance", instance_dir, ssh_port, ssh_user, &mnt_cmd, None).await {
+                if code == 0 {
+                    mounted_9p = true;
+                }
+            }
+        }
 
-        let mut cmd = Command::new("scp");
-        cmd.args([
-            "-i",
-            &self.private_key_path.to_string_lossy(),
-            "-P",
-            &ssh_port.to_string(),
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "UserKnownHostsFile=/dev/null",
-            "-o",
-            "LogLevel=ERROR",
-            "-r",
-            &scp_src,
-            &format!("{}@127.0.0.1:{}", ssh_user, guest_target),
-        ]);
+        // 3. Fallback: synchronize files via scp if 9p mount is not active
+        if !mounted_9p {
+            let scp_src = if src_path.is_dir() {
+                format!("{}/.", host_src.trim_end_matches('/'))
+            } else {
+                host_src.to_string()
+            };
 
-        let status = cmd
-            .status()
-            .await
-            .context("Failed to execute mount sync scp")?;
-        if !status.success() {
-            bail!(
-                "Mount synchronization failed with exit code {:?}",
-                status.code()
-            );
+            let mut cmd = Command::new("scp");
+            cmd.args([
+                "-i",
+                &self.private_key_path.to_string_lossy(),
+                "-P",
+                &ssh_port.to_string(),
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "LogLevel=ERROR",
+                "-r",
+                &scp_src,
+                &format!("{}@127.0.0.1:{}", ssh_user, guest_target),
+            ]);
+
+            let status = cmd
+                .status()
+                .await
+                .context("Failed to execute mount sync scp")?;
+            if !status.success() {
+                bail!(
+                    "Mount synchronization failed with exit code {:?}",
+                    status.code()
+                );
+            }
         }
         Ok(())
     }
