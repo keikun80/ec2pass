@@ -37,7 +37,10 @@ impl Default for PersistentState {
     fn default() -> Self {
         let mut settings = BTreeMap::new();
         settings.insert("client.primary-name".to_string(), "primary".to_string());
-        settings.insert("client.apps.windows-terminal.profiles".to_string(), "primary".to_string());
+        settings.insert(
+            "client.apps.windows-terminal.profiles".to_string(),
+            "primary".to_string(),
+        );
         settings.insert("local.driver".to_string(), "qemu".to_string());
         settings.insert("local.bridged-network".to_string(), "".to_string());
         settings.insert("local.privileged-mounts".to_string(), "true".to_string());
@@ -108,10 +111,7 @@ impl StateStore {
     pub fn get_all_settings(&self) -> BTreeMap<String, String> {
         let mut map = self.data.settings.clone();
         for (name, rec) in &self.data.instances {
-            map.insert(
-                format!("local.{}.cpus", name),
-                rec.details.cpus.to_string(),
-            );
+            map.insert(format!("local.{}.cpus", name), rec.details.cpus.to_string());
             map.insert(
                 format!("local.{}.memory", name),
                 format_bytes(rec.details.memory_total_bytes),
@@ -120,10 +120,7 @@ impl StateStore {
                 format!("local.{}.disk", name),
                 format_bytes(rec.details.disk_total_bytes),
             );
-            map.insert(
-                format!("local.{}.bridged", name),
-                "false".to_string(),
-            );
+            map.insert(format!("local.{}.bridged", name), "false".to_string());
         }
         map
     }
@@ -172,9 +169,15 @@ impl StateStore {
                         rec.details.disk_total_bytes = bytes;
                     }
                     "bridged" => {
-                        self.data.settings.insert(key.to_string(), value.to_string());
+                        self.data
+                            .settings
+                            .insert(key.to_string(), value.to_string());
                     }
-                    other => bail!("Unrecognized instance property 'local.{}.{}'", inst_name, other),
+                    other => bail!(
+                        "Unrecognized instance property 'local.{}.{}'",
+                        inst_name,
+                        other
+                    ),
                 }
                 self.save()?;
                 return Ok(());
@@ -226,7 +229,9 @@ impl StateStore {
             .get_mut(instance_name)
             .with_context(|| format!("No such instance: '{}'", instance_name))?;
 
-        if rec.details.state != InstanceState::Stopped && rec.details.state != InstanceState::Running {
+        if rec.details.state != InstanceState::Stopped
+            && rec.details.state != InstanceState::Running
+        {
             bail!(
                 "Snapshots can only be taken for stopped or running instances ('{}' is currently {}).",
                 instance_name,
@@ -260,14 +265,20 @@ impl StateStore {
         Ok(snap)
     }
 
-    pub fn restore_snapshot(&mut self, instance_name: &str, snapshot_name: &str) -> Result<SnapshotInfo> {
+    pub fn restore_snapshot(
+        &mut self,
+        instance_name: &str,
+        snapshot_name: &str,
+    ) -> Result<SnapshotInfo> {
         let rec = self
             .data
             .instances
             .get_mut(instance_name)
             .with_context(|| format!("No such instance: '{}'", instance_name))?;
 
-        if rec.details.state != InstanceState::Stopped && rec.details.state != InstanceState::Running {
+        if rec.details.state != InstanceState::Stopped
+            && rec.details.state != InstanceState::Running
+        {
             bail!(
                 "Snapshots can only be restored on stopped or running instances ('{}' is currently {}).",
                 instance_name,
@@ -350,7 +361,8 @@ mod tests {
 
     #[test]
     fn test_state_store_allocations() {
-        let tmp_dir = std::env::temp_dir().join(format!("ec2ps_test_state_{}", rand::random::<u32>()));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_state_{}", rand::random::<u32>()));
         let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
 
         let (ssh1, qmp1) = store.allocate_ports();

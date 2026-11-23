@@ -239,6 +239,7 @@ impl SshManager {
     }
 
     /// Transfers files or directories between Host and Guest (`ec2pass transfer`).
+    #[allow(clippy::too_many_arguments)]
     pub async fn transfer_path(
         &self,
         instance_dir: &Path,
@@ -363,9 +364,15 @@ impl SshManager {
             &format!("{}@127.0.0.1:{}", ssh_user, guest_target),
         ]);
 
-        let status = cmd.status().await.context("Failed to execute mount sync scp")?;
+        let status = cmd
+            .status()
+            .await
+            .context("Failed to execute mount sync scp")?;
         if !status.success() {
-            bail!("Mount synchronization failed with exit code {:?}", status.code());
+            bail!(
+                "Mount synchronization failed with exit code {:?}",
+                status.code()
+            );
         }
         Ok(())
     }
@@ -433,8 +440,8 @@ pub fn generate_dynamic_ed25519_keypair() -> Result<(String, String)> {
 
     put_string(&mut priv_blob, "none"); // cipher
     put_string(&mut priv_blob, "none"); // kdf
-    put_string(&mut priv_blob, "");     // kdf options
-    put_u32(&mut priv_blob, 1);         // number of keys
+    put_string(&mut priv_blob, ""); // kdf options
+    put_u32(&mut priv_blob, 1); // number of keys
     put_bytes(&mut priv_blob, &pub_blob); // public key list
 
     // Unencrypted private key payload
@@ -497,4 +504,3 @@ mod tests {
         assert_ne!(pub_str, pub_str2);
     }
 }
-

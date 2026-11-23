@@ -5,6 +5,8 @@
 # ==============================================================================
 set -u
 
+FAILED_TESTS=0
+
 BIN="${EC2PASS_BIN:-target/release/ec2pass}"
 REPORT_FILE="${REPORT_FILE:-/tmp/ec2pass_matrix_capture.md}"
 PLATFORM_NAME="${PLATFORM_NAME:-macOS Darwin (x86_64, HVF)}"
@@ -49,6 +51,10 @@ run_test() {
     echo '```'
     echo "**Exit Code**: \`${STATUS}\`"
     echo ""
+
+    if [ "$STATUS" -ne 0 ]; then
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+    fi
 }
 
 echo "## 1. System & Discovery Commands"
@@ -137,4 +143,9 @@ run_test "6.17 Get Specific Configuration Setting" "$BIN get client.primary-name
 run_test "6.18 Client Authentication" "$BIN authenticate ''"
 
 echo ""
+if [ "$FAILED_TESTS" -ne 0 ]; then
+    echo "=== Test Matrix Run Failed: ${FAILED_TESTS} test(s) failed ==="
+    exit 1
+fi
+
 echo "=== Test Matrix Run Finished Successfully ==="

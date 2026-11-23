@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+$failedTests = 0
 
 if (-not $Bin) {
     if (Test-Path ".\target\release\ec2pass.exe") {
@@ -89,6 +90,9 @@ function Run-Test {
     $lines.Add("")
     
     Write-Host "[$statusCode] $Title"
+    if ($statusCode -ne 0) {
+        $script:failedTests++
+    }
 }
 
 # Section 1
@@ -183,7 +187,16 @@ Run-Test "6.17 Get Specific Configuration Setting" "$Bin get client.primary-name
 Run-Test "6.18 Client Authentication" "$Bin authenticate ''"
 
 $lines.Add("")
-$lines.Add("=== Test Matrix Run Finished Successfully ===")
+if ($failedTests -ne 0) {
+    $lines.Add("=== Test Matrix Run Failed: $failedTests test(s) failed ===")
+} else {
+    $lines.Add("=== Test Matrix Run Finished Successfully ===")
+}
 
 $lines | Out-File -FilePath $ReportFile -Encoding utf8
 Write-Host "`nTest matrix report written to: $ReportFile" -ForegroundColor Green
+
+if ($failedTests -ne 0) {
+    Write-Error "Test matrix failed: $failedTests test(s) failed."
+    exit 1
+}

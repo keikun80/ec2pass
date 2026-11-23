@@ -315,7 +315,7 @@ pub enum RpcStreamFrame {
         message: String,
         percent: Option<u8>,
     },
-    Response(RpcResponse),
+    Response(Box<RpcResponse>),
 }
 
 /// Final Daemon-to-Client RPC response payload.
@@ -536,10 +536,7 @@ fn format_snapshot_list(instances: &[InstanceDetails], format: OutputFormat) -> 
     }
 }
 
-pub fn format_instance_info(
-    instances: &[InstanceDetails],
-    format: OutputFormat,
-) -> Result<String> {
+pub fn format_instance_info(instances: &[InstanceDetails], format: OutputFormat) -> Result<String> {
     match format {
         OutputFormat::Table => {
             let mut blocks = Vec::with_capacity(instances.len());
@@ -593,10 +590,7 @@ pub fn format_instance_info(
                             ));
                             first = false;
                         } else {
-                            b.push_str(&format!(
-                                "{:<16}{} => {}\n",
-                                "", m.source_path, target
-                            ));
+                            b.push_str(&format!("{:<16}{} => {}\n", "", m.source_path, target));
                         }
                     }
                 }
@@ -650,10 +644,7 @@ pub fn format_instance_info(
     }
 }
 
-pub fn format_catalog_find(
-    entries: &[ImageCatalogEntry],
-    format: OutputFormat,
-) -> Result<String> {
+pub fn format_catalog_find(entries: &[ImageCatalogEntry], format: OutputFormat) -> Result<String> {
     match format {
         OutputFormat::Table => {
             let headers = ["Image", "Aliases", "Version"];
@@ -669,11 +660,7 @@ pub fn format_catalog_find(
                 } else {
                     "--".to_string()
                 };
-                rows.push(vec![
-                    primary_alias,
-                    other_aliases,
-                    e.version.clone(),
-                ]);
+                rows.push(vec![primary_alias, other_aliases, e.version.clone()]);
             }
             Ok(render_ascii_table(&headers, &rows))
         }
@@ -783,7 +770,10 @@ mod tests {
         assert_eq!("json".parse::<OutputFormat>().unwrap(), OutputFormat::Json);
         assert_eq!("yaml".parse::<OutputFormat>().unwrap(), OutputFormat::Yaml);
         assert_eq!("csv".parse::<OutputFormat>().unwrap(), OutputFormat::Csv);
-        assert_eq!("table".parse::<OutputFormat>().unwrap(), OutputFormat::Table);
+        assert_eq!(
+            "table".parse::<OutputFormat>().unwrap(),
+            OutputFormat::Table
+        );
         assert!("invalid".parse::<OutputFormat>().is_err());
     }
 

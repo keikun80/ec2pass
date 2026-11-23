@@ -94,8 +94,12 @@ ssh_authorized_keys:
         IsoFile::new("user-data", user_data.into_bytes()),
     ];
 
-    write_cidata_iso(output_iso_path, "cidata", &files)
-        .with_context(|| format!("Failed to write cloud-init seed ISO at {:?}", output_iso_path))
+    write_cidata_iso(output_iso_path, "cidata", &files).with_context(|| {
+        format!(
+            "Failed to write cloud-init seed ISO at {:?}",
+            output_iso_path
+        )
+    })
 }
 
 #[cfg(test)]

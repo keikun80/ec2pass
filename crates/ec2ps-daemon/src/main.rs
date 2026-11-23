@@ -63,17 +63,21 @@ async fn main() -> Result<()> {
     let args = DaemonArgs::parse();
     let mut data_dir = args.data_dir.unwrap_or_else(default_data_dir);
     if let Err(e) = std::fs::create_dir_all(&data_dir) {
-        tracing::warn!("Failed to create data dir at {:?}: {}. Falling back to .ec2ps-data", data_dir, e);
+        tracing::warn!(
+            "Failed to create data dir at {:?}: {}. Falling back to .ec2ps-data",
+            data_dir,
+            e
+        );
         data_dir = PathBuf::from(".ec2ps-data");
         std::fs::create_dir_all(&data_dir)?;
     }
 
     let mut store = StateStore::load_or_create(&data_dir)?;
-    for (_name, rec) in store.data.instances.iter_mut() {
+    for rec in store.data.instances.values_mut() {
         if rec.details.state == InstanceState::Running {
-            let is_alive = rec.pid.map_or(false, |p| {
-                std::path::Path::new(&format!("/proc/{}", p)).exists()
-            });
+            let is_alive = rec
+                .pid
+                .is_some_and(|p| std::path::Path::new(&format!("/proc/{}", p)).exists());
             if !is_alive {
                 rec.details.state = InstanceState::Stopped;
                 rec.pid = None;
@@ -93,7 +97,9 @@ async fn main() -> Result<()> {
         }
     };
 
-    let bind_addr = args.address.unwrap_or_else(ec2ps_protocol::default_daemon_address);
+    let bind_addr = args
+        .address
+        .unwrap_or_else(ec2ps_protocol::default_daemon_address);
 
     tracing::info!(
         "ec2passd (InhausLab ec2pass Daemon v{}) listening on {} [driver: {}, data_dir: {:?}]",
@@ -126,7 +132,10 @@ async fn main() -> Result<()> {
                 .create(pipe_name)
                 .with_context(|| format!("Failed to create named pipe {}", pipe_name))?;
 
-            tracing::info!("ec2passd daemon is ready to accept client connections via Named Pipe {}", pipe_name);
+            tracing::info!(
+                "ec2passd daemon is ready to accept client connections via Named Pipe {}",
+                pipe_name
+            );
 
             loop {
                 tokio::select! {
@@ -165,7 +174,10 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("Failed to bind daemon socket on {}", bind_addr))?;
 
-    tracing::info!("ec2passd daemon is ready to accept client connections via TCP {}", bind_addr);
+    tracing::info!(
+        "ec2passd daemon is ready to accept client connections via TCP {}",
+        bind_addr
+    );
 
     loop {
         tokio::select! {
@@ -243,10 +255,10 @@ where
             Err(e) => {
                 let _ = send_frame(
                     &mut writer,
-                    &RpcStreamFrame::Response(RpcResponse::Error(format!(
+                    &RpcStreamFrame::Response(Box::new(RpcResponse::Error(format!(
                         "Malformed RPC request: {}",
                         e
-                    ))),
+                    )))),
                 )
                 .await;
                 continue;
@@ -258,7 +270,7 @@ where
             Err(e) => RpcResponse::Error(format!("{:#}", e)),
         };
 
-        send_frame(&mut writer, &RpcStreamFrame::Response(resp)).await?;
+        send_frame(&mut writer, &RpcStreamFrame::Response(Box::new(resp))).await?;
     }
     Ok(())
 }
@@ -299,7 +311,10 @@ where
             show_versions,
             force_update,
         } => {
-            let mut entries = ctx.vault.fetch_catalog_extended(show_versions, force_update).await;
+            let mut entries = ctx
+                .vault
+                .fetch_catalog_extended(show_versions, force_update)
+                .await;
             if let Some(q) = search_string {
                 let q_low = q.to_lowercase();
                 entries.retain(|e| {
@@ -502,7 +517,10 @@ where
             send_progress(
                 writer,
                 "Waiting",
-                &format!("Waiting for {} to boot and cloud-init to complete...", instance_name),
+                &format!(
+                    "Waiting for {} to boot and cloud-init to complete...",
+                    instance_name
+                ),
                 Some(85),
             )
             .await?;
@@ -517,21 +535,23 @@ where
 
                 // 1. Check if SSH TCP port is open (1.5s timeout)
                 let addr = format!("127.0.0.1:{}", ssh_port);
-                let tcp_ok = match tokio::time::timeout(
-                    std::time::Duration::from_millis(1500),
-                    tokio::net::TcpStream::connect(&addr),
-                )
-                .await
-                {
-                    Ok(Ok(_)) => true,
-                    _ => false,
-                };
+                let tcp_ok = matches!(
+                    tokio::time::timeout(
+                        std::time::Duration::from_millis(1500),
+                        tokio::net::TcpStream::connect(&addr),
+                    )
+                    .await,
+                    Ok(Ok(_))
+                );
 
                 if tcp_ok {
                     send_progress(
                         writer,
                         "Waiting",
-                        &format!("SSH port open. Verifying cloud-init status ({}/{}s)...", elapsed, timeout_secs),
+                        &format!(
+                            "SSH port open. Verifying cloud-init status ({}/{}s)...",
+                            elapsed, timeout_secs
+                        ),
                         Some(pct),
                     )
                     .await?;
@@ -557,7 +577,10 @@ where
                     send_progress(
                         writer,
                         "Waiting",
-                        &format!("Waiting for instance to boot ({}/{}s)...", elapsed, timeout_secs),
+                        &format!(
+                            "Waiting for instance to boot ({}/{}s)...",
+                            elapsed, timeout_secs
+                        ),
                         Some(pct),
                     )
                     .await?;
@@ -620,23 +643,38 @@ where
                     .get_mut(&name)
                     .with_context(|| format!("Instance '{}' does not exist", name))?;
                 if rec.details.state == InstanceState::Deleted {
-                    bail!("Cannot start deleted instance '{}'. Recover it first.", name);
+                    bail!(
+                        "Cannot start deleted instance '{}'. Recover it first.",
+                        name
+                    );
                 }
-                let is_alive = rec.pid.map_or(false, |p| {
-                    std::path::Path::new(&format!("/proc/{}", p)).exists()
-                });
+                let is_alive = rec
+                    .pid
+                    .is_some_and(|p| std::path::Path::new(&format!("/proc/{}", p)).exists());
                 if rec.details.state == InstanceState::Suspended {
                     ctx.driver.resume_vm(rec).await?;
                     let _ = ctx
                         .ssh
-                        .wait_until_ready(&name, &rec.instance_dir, rec.details.ssh_port, &rec.details.ssh_user, 15)
+                        .wait_until_ready(
+                            &name,
+                            &rec.instance_dir,
+                            rec.details.ssh_port,
+                            &rec.details.ssh_user,
+                            15,
+                        )
                         .await;
                 } else if rec.details.state != InstanceState::Running || !is_alive {
                     let pid = ctx.driver.start_vm(rec).await?;
                     rec.pid = Some(pid);
                     let _ = ctx
                         .ssh
-                        .wait_until_ready(&name, &rec.instance_dir, rec.details.ssh_port, &rec.details.ssh_user, 60)
+                        .wait_until_ready(
+                            &name,
+                            &rec.instance_dir,
+                            rec.details.ssh_port,
+                            &rec.details.ssh_user,
+                            60,
+                        )
                         .await;
                 }
                 rec.details.state = InstanceState::Running;
@@ -705,7 +743,13 @@ where
                 rec.pid = Some(pid);
                 let _ = ctx
                     .ssh
-                    .wait_until_ready(&name, &rec.instance_dir, rec.details.ssh_port, &rec.details.ssh_user, 60)
+                    .wait_until_ready(
+                        &name,
+                        &rec.instance_dir,
+                        rec.details.ssh_port,
+                        &rec.details.ssh_user,
+                        60,
+                    )
                     .await;
                 rec.details.state = InstanceState::Running;
                 restarted.push(rec.details.clone());
@@ -797,7 +841,9 @@ where
                 }
             }
             store.save()?;
-            Ok(RpcResponse::OkMessage("Purged all deleted instances.".to_string()))
+            Ok(RpcResponse::OkMessage(
+                "Purged all deleted instances.".to_string(),
+            ))
         }
 
         RpcRequest::List { snapshots: _ } => {
@@ -862,7 +908,11 @@ where
             };
 
             if state != InstanceState::Running {
-                bail!("Instance '{}' is not running (current state: {})", name, state);
+                bail!(
+                    "Instance '{}' is not running (current state: {})",
+                    name,
+                    state
+                );
             }
 
             let (stdout, stderr, exit_code) = ctx
@@ -1030,7 +1080,9 @@ where
 
             let inst_name = find_inst(&destination)
                 .or_else(|| sources.iter().find_map(|s| find_inst(s)))
-                .context("Transfer requires at least one instance path in the form <instance>:<path>")?;
+                .context(
+                    "Transfer requires at least one instance path in the form <instance>:<path>",
+                )?;
 
             let (instance_dir, ssh_port, ssh_user) = {
                 let store = ctx.store.lock().await;
@@ -1086,7 +1138,9 @@ where
                     .take_live_snapshot(qmp_port, &disk_path, &snap.name)
                     .await?;
             } else {
-                ctx.driver.take_disk_snapshot(&disk_path, &snap.name).await?;
+                ctx.driver
+                    .take_disk_snapshot(&disk_path, &snap.name)
+                    .await?;
             }
             Ok(RpcResponse::SnapshotCreated(snap))
         }
@@ -1197,7 +1251,9 @@ where
                 let prefix = format!("{}.", k);
                 let matched: BTreeMap<String, String> = all_settings
                     .into_iter()
-                    .filter(|(key_name, _)| key_name.starts_with(&prefix) && !key_name.starts_with("local._"))
+                    .filter(|(key_name, _)| {
+                        key_name.starts_with(&prefix) && !key_name.starts_with("local._")
+                    })
                     .collect();
                 if matched.is_empty() {
                     bail!("Unrecognized settings key: '{}'", k);
@@ -1381,7 +1437,8 @@ async fn detect_host_networks() -> Vec<NetworkInterfaceInfo> {
                 }
 
                 let if_path = entry.path();
-                let is_wireless = if_path.join("wireless").exists() || if_path.join("phy80211").exists();
+                let is_wireless =
+                    if_path.join("wireless").exists() || if_path.join("phy80211").exists();
                 let is_bridge = if_path.join("bridge").exists();
 
                 let net_type = if is_wireless {

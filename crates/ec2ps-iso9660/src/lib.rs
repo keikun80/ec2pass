@@ -296,7 +296,7 @@ fn build_dir_record(
     }
 
     let base_len = 33 + ident.len();
-    let pad_after_ident = if ident.len() % 2 == 0 { 1 } else { 0 };
+    let pad_after_ident = if ident.len().is_multiple_of(2) { 1 } else { 0 };
     let total_len = base_len + pad_after_ident + susp.len();
 
     let mut rec = vec![0u8; total_len];
@@ -344,9 +344,18 @@ mod tests {
     #[test]
     fn test_build_cidata_iso_structure() {
         let files = vec![
-            IsoFile::new("meta-data", b"instance-id: test-1\nlocal-hostname: al2023\n".to_vec()),
-            IsoFile::new("user-data", b"#cloud-config\nusers:\n  - default\n".to_vec()),
-            IsoFile::new("vendor-data", b"#cloud-config\npackage_update: false\n".to_vec()),
+            IsoFile::new(
+                "meta-data",
+                b"instance-id: test-1\nlocal-hostname: al2023\n".to_vec(),
+            ),
+            IsoFile::new(
+                "user-data",
+                b"#cloud-config\nusers:\n  - default\n".to_vec(),
+            ),
+            IsoFile::new(
+                "vendor-data",
+                b"#cloud-config\npackage_update: false\n".to_vec(),
+            ),
         ];
 
         let iso = build_cidata_iso("cidata", &files).expect("ISO generation should succeed");

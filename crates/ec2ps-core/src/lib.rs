@@ -11,9 +11,7 @@ use std::path::PathBuf;
 /// Returns the data directory for `ec2passd`.
 /// Can be overridden via `EC2PASS_HOME` environment variable.
 pub fn default_data_dir() -> PathBuf {
-    if let Ok(custom) = std::env::var("EC2PASS_HOME")
-        .or_else(|_| std::env::var("EC2PS_HOME"))
-    {
+    if let Ok(custom) = std::env::var("EC2PASS_HOME").or_else(|_| std::env::var("EC2PS_HOME")) {
         return PathBuf::from(custom);
     }
     if let Some(proj) = dirs::data_local_dir() {

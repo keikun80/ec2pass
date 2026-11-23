@@ -440,8 +440,9 @@ async fn run_cli() -> Result<()> {
                 if let Ok(RpcResponse::AliasList(aliases)) =
                     send_rpc(addr, RpcRequest::Aliases, false).await
                 {
-                    if let Some(target_alias) =
-                        aliases.into_iter().find(|a| a.alias_name == *candidate_alias)
+                    if let Some(target_alias) = aliases
+                        .into_iter()
+                        .find(|a| a.alias_name == *candidate_alias)
                     {
                         let mut exec_cmd = vec![target_alias.command];
                         exec_cmd.extend(args.into_iter().skip(candidate_idx + 1));
@@ -515,7 +516,10 @@ async fn run_cli() -> Result<()> {
                         println!("ec2pass: {}\nec2passd: {}", client_version, daemon_version);
                     }
                     OutputFormat::Csv => {
-                        println!("Component,Version\nec2pass,{}\nec2passd,{}", client_version, daemon_version);
+                        println!(
+                            "Component,Version\nec2pass,{}\nec2passd,{}",
+                            client_version, daemon_version
+                        );
                     }
                 }
             }
@@ -562,28 +566,31 @@ async fn run_cli() -> Result<()> {
             let memory_bytes = parse_byte_size(&memory)?;
             let disk_bytes = parse_byte_size(&disk)?;
 
-            let cloud_init_yaml = if let Some(ci_path) = cloud_init {
-                if ci_path == "-" {
-                    use std::io::Read;
-                    let mut buf = String::new();
-                    io::stdin().read_to_string(&mut buf)?;
-                    Some(buf)
+            let cloud_init_yaml =
+                if let Some(ci_path) = cloud_init {
+                    if ci_path == "-" {
+                        use std::io::Read;
+                        let mut buf = String::new();
+                        io::stdin().read_to_string(&mut buf)?;
+                        Some(buf)
+                    } else {
+                        Some(std::fs::read_to_string(&ci_path).with_context(|| {
+                            format!("Failed to read cloud-init file '{}'", ci_path)
+                        })?)
+                    }
                 } else {
-                    Some(
-                        std::fs::read_to_string(&ci_path)
-                            .with_context(|| format!("Failed to read cloud-init file '{}'", ci_path))?,
-                    )
-                }
-            } else {
-                None
-            };
+                    None
+                };
 
             let mut parsed_mounts = Vec::new();
             for m in mounts {
                 if let Some((src, dst)) = split_host_guest_mount(&m) {
                     parsed_mounts.push((src, dst));
                 } else {
-                    bail!("Invalid --mount specification '{}'. Expected <local-path>:<instance-path>", m);
+                    bail!(
+                        "Invalid --mount specification '{}'. Expected <local-path>:<instance-path>",
+                        m
+                    );
                 }
             }
 
@@ -724,47 +731,36 @@ async fn run_cli() -> Result<()> {
 
         Commands::Shell { name } => {
             // Check if instance exists; if not and it's default primary, auto-launch it
-            let shell_resp = match send_rpc(
-                addr,
-                RpcRequest::ShellInfo {
-                    name: name.clone(),
-                },
-                false,
-            )
-            .await
-            {
-                Ok(r) => r,
-                Err(_) if name.is_none() || name.as_deref() == Some("primary") => {
-                    let target = name.unwrap_or_else(|| "primary".to_string());
-                    println!("Launching primary instance '{}' with Amazon Linux 2023...", target);
-                    send_rpc(
-                        addr,
-                        RpcRequest::Launch {
-                            image: Some("al2023".to_string()),
-                            image_version: None,
-                            name: Some(target.clone()),
-                            cpus: 1,
-                            memory_bytes: 1024 * 1024 * 1024,
-                            disk_bytes: 5 * 1024 * 1024 * 1024,
-                            cloud_init_yaml: None,
-                            networks: vec![],
-                            mounts: vec![],
-                            timeout_secs: 300,
-                        },
-                        true,
-                    )
-                    .await?;
-                    send_rpc(
-                        addr,
-                        RpcRequest::ShellInfo {
-                            name: Some(target),
-                        },
-                        false,
-                    )
-                    .await?
-                }
-                Err(e) => return Err(e),
-            };
+            let shell_resp =
+                match send_rpc(addr, RpcRequest::ShellInfo { name: name.clone() }, false).await {
+                    Ok(r) => r,
+                    Err(_) if name.is_none() || name.as_deref() == Some("primary") => {
+                        let target = name.unwrap_or_else(|| "primary".to_string());
+                        println!(
+                            "Launching primary instance '{}' with Amazon Linux 2023...",
+                            target
+                        );
+                        send_rpc(
+                            addr,
+                            RpcRequest::Launch {
+                                image: Some("al2023".to_string()),
+                                image_version: None,
+                                name: Some(target.clone()),
+                                cpus: 1,
+                                memory_bytes: 1024 * 1024 * 1024,
+                                disk_bytes: 5 * 1024 * 1024 * 1024,
+                                cloud_init_yaml: None,
+                                networks: vec![],
+                                mounts: vec![],
+                                timeout_secs: 300,
+                            },
+                            true,
+                        )
+                        .await?;
+                        send_rpc(addr, RpcRequest::ShellInfo { name: Some(target) }, false).await?
+                    }
+                    Err(e) => return Err(e),
+                };
 
             if let RpcResponse::ShellConnection {
                 instance: _,
@@ -807,7 +803,16 @@ async fn run_cli() -> Result<()> {
             for t in targets {
                 let (inst, target_path) = match t.split_once(':') {
                     Some((i, p)) => (i.to_string(), p.to_string()),
-                    None => (t.clone(), format!("/home/ec2-user/{}", PathBuf::from(&source).file_name().unwrap_or_default().to_string_lossy())),
+                    None => (
+                        t.clone(),
+                        format!(
+                            "/home/ec2-user/{}",
+                            PathBuf::from(&source)
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                        ),
+                    ),
                 };
                 send_rpc(
                     addr,
@@ -1062,7 +1067,10 @@ async fn run_cli() -> Result<()> {
                     OutputFormat::Csv => {
                         println!("Alias,Instance,Command,Working directory");
                         for a in list {
-                            println!("{},{},{},{}", a.alias_name, a.instance, a.command, a.working_directory);
+                            println!(
+                                "{},{},{},{}",
+                                a.alias_name, a.instance, a.command, a.working_directory
+                            );
                         }
                     }
                 }
@@ -1080,7 +1088,9 @@ async fn run_cli() -> Result<()> {
                     OutputFormat::Table => {
                         let rows: Vec<Vec<String>> = nets
                             .iter()
-                            .map(|n| vec![n.name.clone(), n.net_type.clone(), n.description.clone()])
+                            .map(|n| {
+                                vec![n.name.clone(), n.net_type.clone(), n.description.clone()]
+                            })
                             .collect();
                         print!(
                             "{}",
@@ -1113,14 +1123,22 @@ async fn connect_or_spawn_daemon(addr: &str) -> Result<TcpStream> {
     // Attempt to find `ec2passd` binary next to current executable
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(bin_dir) = current_exe.parent() {
-            let daemon_bin_name = if cfg!(windows) { "ec2passd.exe" } else { "ec2passd" };
+            let daemon_bin_name = if cfg!(windows) {
+                "ec2passd.exe"
+            } else {
+                "ec2passd"
+            };
             let mut daemon_path = bin_dir.join(daemon_bin_name);
             if !daemon_path.exists() {
                 let fallback = if cfg!(windows) { "mpd.exe" } else { "mpd" };
                 daemon_path = bin_dir.join(fallback);
             }
             if !daemon_path.exists() {
-                let fallback = if cfg!(windows) { "alpassd.exe" } else { "alpassd" };
+                let fallback = if cfg!(windows) {
+                    "alpassd.exe"
+                } else {
+                    "alpassd"
+                };
                 daemon_path = bin_dir.join(fallback);
             }
             if daemon_path.exists() {
@@ -1239,10 +1257,17 @@ fn default_prompt_for_req(req: &RpcRequest) -> String {
                 format!("Suspending {}...", names.join(", "))
             }
         }
-        RpcRequest::Mount { instance, target_path, .. } => {
+        RpcRequest::Mount {
+            instance,
+            target_path,
+            ..
+        } => {
             format!("Mounting directory into {}:{}...", instance, target_path)
         }
-        RpcRequest::Umount { instance, target_path } => {
+        RpcRequest::Umount {
+            instance,
+            target_path,
+        } => {
             if let Some(p) = target_path {
                 format!("Unmounting {}:{}...", instance, p)
             } else {
@@ -1252,17 +1277,28 @@ fn default_prompt_for_req(req: &RpcRequest) -> String {
         RpcRequest::Transfer { destination, .. } => {
             format!("Transferring files => {}...", destination)
         }
-        RpcRequest::Snapshot { instance, snapshot_name, .. } => {
+        RpcRequest::Snapshot {
+            instance,
+            snapshot_name,
+            ..
+        } => {
             if let Some(name) = snapshot_name {
                 format!("Taking snapshot '{}' on {}...", name, instance)
             } else {
                 format!("Taking snapshot on {}...", instance)
             }
         }
-        RpcRequest::Restore { instance, snapshot_name, .. } => {
+        RpcRequest::Restore {
+            instance,
+            snapshot_name,
+            ..
+        } => {
             format!("Restoring snapshot '{}' on {}...", snapshot_name, instance)
         }
-        RpcRequest::Clone { source_name, destination_name } => {
+        RpcRequest::Clone {
+            source_name,
+            destination_name,
+        } => {
             if let Some(dest) = destination_name {
                 format!("Cloning {} to {}...", source_name, dest)
             } else {
@@ -1362,7 +1398,7 @@ where
                             eprint!("\r\x1b[2K");
                             let _ = io::stderr().flush();
                         }
-                        match resp {
+                        match *resp {
                             RpcResponse::Error(err_msg) => bail!("{}", err_msg),
                             other => return Ok(other),
                         }
@@ -1378,9 +1414,9 @@ where
 fn parse_id_mappings(mappings: &[String]) -> Result<Vec<(i32, i32)>> {
     let mut out = Vec::with_capacity(mappings.len());
     for m in mappings {
-        let (h, g) = m
-            .split_once(':')
-            .with_context(|| format!("Invalid ID mapping '{}': expected <host_id>:<guest_id>", m))?;
+        let (h, g) = m.split_once(':').with_context(|| {
+            format!("Invalid ID mapping '{}': expected <host_id>:<guest_id>", m)
+        })?;
         out.push((h.parse()?, g.parse()?));
     }
     Ok(out)

@@ -7,8 +7,8 @@
 //! Also provides built-in curated catalog entries so `ec2pass find` works out-of-the-box.
 
 use anyhow::{bail, Context, Result};
-use futures_util::StreamExt;
 use ec2ps_protocol::ImageCatalogEntry;
+use futures_util::StreamExt;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -123,7 +123,10 @@ impl ImageVault {
         {
             Ok(c) => c,
             Err(_) => {
-                return KNOWN_AL2023_VERSIONS.iter().map(|s| s.to_string()).collect();
+                return KNOWN_AL2023_VERSIONS
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
             }
         };
 
@@ -159,7 +162,8 @@ impl ImageVault {
         if let Ok(resp) = client.get(AL2023_RELEASE_NOTES_RSS).send().await {
             if resp.status().is_success() {
                 if let Ok(rss_text) = resp.text().await {
-                    let re_rss = Regex::new(r#"<title>AL2023\s+([0-9.]+)\s+released</title>"#).unwrap();
+                    let re_rss =
+                        Regex::new(r#"<title>AL2023\s+([0-9.]+)\s+released</title>"#).unwrap();
                     for cap in re_rss.captures_iter(&rss_text) {
                         let mut ver = cap[1].to_string();
                         let dot_count = ver.chars().filter(|c| *c == '.').count();
@@ -198,11 +202,7 @@ impl ImageVault {
         } else {
             "kvm"
         };
-        let arch_suffix = if arch == "aarch64" {
-            "arm64"
-        } else {
-            "x86_64"
-        };
+        let arch_suffix = if arch == "aarch64" { "arm64" } else { "x86_64" };
 
         if show_versions {
             let versions = self.fetch_available_versions().await;
@@ -267,8 +267,10 @@ impl ImageVault {
         {
             if let Ok(resp) = client.get(cdn_url).send().await {
                 if let Ok(html) = resp.text().await {
-                    let re = Regex::new(r#"href="(al2023-kvm-([0-9.]+)-kernel-([0-9.]+)-[^"]+\.qcow2)""#)
-                        .unwrap();
+                    let re = Regex::new(
+                        r#"href="(al2023-kvm-([0-9.]+)-kernel-([0-9.]+)-[^"]+\.qcow2)""#,
+                    )
+                    .unwrap();
                     if let Some(caps) = re.captures(&html) {
                         let filename = &caps[1];
                         let ver = &caps[2];
@@ -287,7 +289,8 @@ impl ImageVault {
                 if resp.status().is_success() {
                     if let Ok(sums_text) = resp.text().await {
                         if let Some(first) = catalog.first_mut() {
-                            let target_filename = first.download_url.rsplit('/').next().unwrap_or("");
+                            let target_filename =
+                                first.download_url.rsplit('/').next().unwrap_or("");
                             for line in sums_text.lines() {
                                 let mut parts = line.split_whitespace();
                                 if let (Some(hash), Some(fname)) = (parts.next(), parts.next()) {
@@ -320,11 +323,7 @@ impl ImageVault {
         } else {
             "kvm"
         };
-        let arch_suffix = if arch == "aarch64" {
-            "arm64"
-        } else {
-            "x86_64"
-        };
+        let arch_suffix = if arch == "aarch64" { "arm64" } else { "x86_64" };
 
         // Normalize version: if user specified e.g. "2023.12.20261119", try as-is and with ".0"
         let candidate_versions = if req_ver.chars().filter(|c| *c == '.').count() == 2 {
@@ -339,10 +338,7 @@ impl ImageVault {
             .unwrap_or_default();
 
         for candidate in &candidate_versions {
-            let sums_url = format!(
-                "{}{}/{}/SHA256SUMS",
-                AL2023_CDN_BASE, candidate, kvm_dir
-            );
+            let sums_url = format!("{}{}/{}/SHA256SUMS", AL2023_CDN_BASE, candidate, kvm_dir);
 
             if let Ok(resp) = client.get(&sums_url).send().await {
                 if resp.status().is_success() {
@@ -351,7 +347,9 @@ impl ImageVault {
                             let mut parts = line.split_whitespace();
                             if let (Some(hash), Some(fname)) = (parts.next(), parts.next()) {
                                 let clean_fname = fname.trim_start_matches('*');
-                                if clean_fname.ends_with(".qcow2") && clean_fname.contains(arch_suffix) {
+                                if clean_fname.ends_with(".qcow2")
+                                    && clean_fname.contains(arch_suffix)
+                                {
                                     let download_url = format!(
                                         "{}{}/{}/{}",
                                         AL2023_CDN_BASE, candidate, kvm_dir, clean_fname
@@ -493,7 +491,10 @@ impl ImageVault {
         };
 
         for entry in catalog {
-            if entry.aliases.iter().any(|a| a.eq_ignore_ascii_case(search_key))
+            if entry
+                .aliases
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(search_key))
                 || entry.release.eq_ignore_ascii_case(search_key)
                 || entry.version.eq_ignore_ascii_case(search_key)
             {
@@ -689,7 +690,10 @@ mod tests {
         let k612 = vault.resolve_image(Some("al2023-k6.12")).await.unwrap();
         assert!(k612.release.contains("Amazon Linux"));
 
-        let custom = vault.resolve_image(Some("https://example.com/custom.qcow2")).await.unwrap();
+        let custom = vault
+            .resolve_image(Some("https://example.com/custom.qcow2"))
+            .await
+            .unwrap();
         assert_eq!(custom.remote, "custom");
 
         let _ = std::fs::remove_dir_all(&tmp);

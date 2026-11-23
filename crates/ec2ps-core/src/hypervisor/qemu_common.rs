@@ -102,7 +102,8 @@ impl QemuDriver {
                     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
                 }
                 Err(e) => {
-                    return Err(e).with_context(|| format!("Failed to connect to QMP socket at {}", addr));
+                    return Err(e)
+                        .with_context(|| format!("Failed to connect to QMP socket at {}", addr));
                 }
             }
         }
@@ -203,14 +204,33 @@ impl QemuDriver {
 
         if cfg!(target_os = "linux") {
             if std::path::Path::new("/dev/kvm").exists() {
-                args.extend(["-enable-kvm".to_string(), "-cpu".to_string(), "host".to_string()]);
+                args.extend([
+                    "-enable-kvm".to_string(),
+                    "-cpu".to_string(),
+                    "host".to_string(),
+                ]);
             } else {
-                args.extend(["-accel".to_string(), "tcg".to_string(), "-cpu".to_string(), "max".to_string()]);
+                args.extend([
+                    "-accel".to_string(),
+                    "tcg".to_string(),
+                    "-cpu".to_string(),
+                    "max".to_string(),
+                ]);
             }
         } else if cfg!(target_os = "macos") {
-            args.extend(["-accel".to_string(), "hvf".to_string(), "-cpu".to_string(), "host".to_string()]);
+            args.extend([
+                "-accel".to_string(),
+                "hvf".to_string(),
+                "-cpu".to_string(),
+                "host".to_string(),
+            ]);
         } else if cfg!(target_os = "windows") {
-            args.extend(["-accel".to_string(), "whpx,kernel-irqchip=off".to_string(), "-accel".to_string(), "tcg".to_string()]);
+            args.extend([
+                "-accel".to_string(),
+                "whpx,kernel-irqchip=off".to_string(),
+                "-accel".to_string(),
+                "tcg".to_string(),
+            ]);
         }
 
         args
@@ -272,7 +292,9 @@ impl super::VirtualMachineDriver for QemuDriver {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .with_context(|| format!("Failed to spawn QEMU hypervisor process: {}", self.qemu_bin))?;
+            .with_context(|| {
+                format!("Failed to spawn QEMU hypervisor process: {}", self.qemu_bin)
+            })?;
 
         let pid = child.id().unwrap_or(0);
         tokio::spawn(async move {
@@ -285,7 +307,9 @@ impl super::VirtualMachineDriver for QemuDriver {
         if force {
             let _ = self.send_qmp_command(rec.qmp_port, "quit").await;
         } else {
-            let _ = self.send_qmp_command(rec.qmp_port, "system_powerdown").await;
+            let _ = self
+                .send_qmp_command(rec.qmp_port, "system_powerdown")
+                .await;
         }
 
         // Wait for the QEMU process to cleanly exit and release disk locks (up to 5 seconds)
@@ -317,7 +341,12 @@ impl super::VirtualMachineDriver for QemuDriver {
     async fn take_disk_snapshot(&self, disk_path: &Path, snapshot_name: &str) -> Result<()> {
         for _ in 1..=6 {
             let status = Command::new(&self.qemu_img_bin)
-                .args(["snapshot", "-c", snapshot_name, &disk_path.to_string_lossy()])
+                .args([
+                    "snapshot",
+                    "-c",
+                    snapshot_name,
+                    &disk_path.to_string_lossy(),
+                ])
                 .status()
                 .await?;
             if status.success() {
@@ -330,7 +359,12 @@ impl super::VirtualMachineDriver for QemuDriver {
 
     async fn restore_disk_snapshot(&self, disk_path: &Path, snapshot_name: &str) -> Result<()> {
         let status = Command::new(&self.qemu_img_bin)
-            .args(["snapshot", "-a", snapshot_name, &disk_path.to_string_lossy()])
+            .args([
+                "snapshot",
+                "-a",
+                snapshot_name,
+                &disk_path.to_string_lossy(),
+            ])
             .status()
             .await?;
         if !status.success() {
@@ -339,21 +373,43 @@ impl super::VirtualMachineDriver for QemuDriver {
         Ok(())
     }
 
-    async fn take_live_snapshot(&self, qmp_port: u16, disk_path: &Path, snapshot_name: &str) -> Result<()> {
-        match self.send_hmp_command(qmp_port, &format!("savevm {}", snapshot_name)).await {
+    async fn take_live_snapshot(
+        &self,
+        qmp_port: u16,
+        disk_path: &Path,
+        snapshot_name: &str,
+    ) -> Result<()> {
+        match self
+            .send_hmp_command(qmp_port, &format!("savevm {}", snapshot_name))
+            .await
+        {
             Ok(_) => Ok(()),
             Err(e) => {
-                tracing::warn!("QMP live snapshot failed ({:?}), falling back to offline disk snapshot", e);
+                tracing::warn!(
+                    "QMP live snapshot failed ({:?}), falling back to offline disk snapshot",
+                    e
+                );
                 self.take_disk_snapshot(disk_path, snapshot_name).await
             }
         }
     }
 
-    async fn restore_live_snapshot(&self, qmp_port: u16, disk_path: &Path, snapshot_name: &str) -> Result<()> {
-        match self.send_hmp_command(qmp_port, &format!("loadvm {}", snapshot_name)).await {
+    async fn restore_live_snapshot(
+        &self,
+        qmp_port: u16,
+        disk_path: &Path,
+        snapshot_name: &str,
+    ) -> Result<()> {
+        match self
+            .send_hmp_command(qmp_port, &format!("loadvm {}", snapshot_name))
+            .await
+        {
             Ok(_) => Ok(()),
             Err(e) => {
-                tracing::warn!("QMP live restore failed ({:?}), falling back to offline disk restore", e);
+                tracing::warn!(
+                    "QMP live restore failed ({:?}), falling back to offline disk restore",
+                    e
+                );
                 self.restore_disk_snapshot(disk_path, snapshot_name).await
             }
         }
