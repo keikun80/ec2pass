@@ -360,7 +360,7 @@ Shows logs for debugging boot and user-data scripts.
 
   On Amazon Linux 2023, cloud-init does not echo user-data output to the serial console, so script output is only in `--cloud-init` (and in `launch --watch`, which reads the same log).
 
-  The console log is reset each time QEMU starts (`launch`, `start`, `restart`); reboots from inside the guest append to it, so it can contain several boots. It stays readable after the instance is stopped.
+  A new instance starts with an empty console log; reboots from inside the guest append to it, so it can contain several boots. It stays readable after the instance is stopped.
 
 * **Trace output** (`launch --trace`):
   ```text
