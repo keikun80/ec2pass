@@ -88,6 +88,38 @@ enum Commands {
         /// Maximum time (in seconds) to wait for the command to complete
         #[arg(long, default_value_t = 300)]
         timeout: u64,
+
+        /// Stream the serial console (boot messages and user-data output) while launching
+        #[arg(long)]
+        watch: bool,
+
+        /// Record a timestamped, line-numbered bash trace of user-data scripts
+        /// (view with 'ec2pass logs <name> --trace')
+        #[arg(long)]
+        trace: bool,
+    },
+
+    /// Show instance logs (serial console by default) for debugging user-data
+    Logs {
+        /// Name of the instance
+        name: String,
+
+        /// Keep printing new console output (Ctrl-C to stop)
+        #[arg(short, long)]
+        follow: bool,
+
+        /// Show 'cloud-init status --long' and /var/log/cloud-init-output.log from the guest
+        /// (combine with -f to keep following the output log)
+        #[arg(long = "cloud-init", conflicts_with_all = ["trace", "save"])]
+        cloud_init: bool,
+
+        /// Show the user-data bash trace (instance must be launched with --trace)
+        #[arg(long, conflicts_with_all = ["follow", "save"])]
+        trace: bool,
+
+        /// Save a debug bundle of guest and console logs on the host and print its path
+        #[arg(long, conflicts_with = "follow")]
+        save: bool,
     },
 
     /// Start instances
@@ -560,6 +592,8 @@ async fn run_cli() -> Result<()> {
             networks,
             mounts,
             timeout,
+            watch,
+            trace,
         } => {
             // Hypervisor prerequisite check: fail immediately with actionable guide if missing
             ec2ps_core::hypervisor::check_hypervisor_prerequisites()?;
@@ -608,6 +642,8 @@ async fn run_cli() -> Result<()> {
                     networks,
                     mounts: parsed_mounts,
                     timeout_secs: timeout,
+                    watch,
+                    trace,
                 },
                 true,
             )
@@ -692,6 +728,32 @@ async fn run_cli() -> Result<()> {
                     print!("{}", format_instance_list(&instances, true, format)?);
                 } else {
                     print!("{}", format_instance_info(&instances, format)?);
+                }
+            }
+        }
+
+        Commands::Logs {
+            name,
+            follow,
+            cloud_init,
+            trace,
+            save,
+        } => {
+            let resp = send_rpc(
+                addr,
+                RpcRequest::Logs {
+                    name,
+                    follow,
+                    cloud_init,
+                    trace,
+                    save,
+                },
+                false,
+            )
+            .await?;
+            if let RpcResponse::OkMessage(msg) = resp {
+                if !msg.is_empty() {
+                    println!("{}", msg);
                 }
             }
         }
@@ -811,6 +873,8 @@ async fn run_cli() -> Result<()> {
                             networks: vec![],
                             mounts: vec![],
                             timeout_secs: 300,
+                            watch: false,
+                            trace: false,
                         },
                         true,
                     )
@@ -1450,6 +1514,14 @@ where
                                 let _ = io::stderr().flush();
                             }
                         }
+                    }
+                    RpcStreamFrame::Log { line } => {
+                        if last_was_inline {
+                            eprint!("\r\x1b[2K");
+                            let _ = io::stderr().flush();
+                            last_was_inline = false;
+                        }
+                        println!("{}", line);
                     }
                     RpcStreamFrame::Response(resp) => {
                         if last_was_inline {

@@ -70,6 +70,21 @@ ec2pass launch [IMAGE] [OPTIONS]
   * `--cloud-init <FILE|- >`: Path to a cloud-config YAML file or shell script (or `-` for stdin).
   * `--mount <LOCAL:GUEST>`: Mount a host directory on initial launch.
   * `--timeout <SECS>`: Maximum wait time for instance ready state (default: `300`).
+  * `--watch`: Stream boot output while waiting. Serial-console lines are prefixed `console    |`; once SSH is up, new lines of the guest's `/var/log/cloud-init-output.log` (your user-data output) are prefixed `cloud-init |`.
+  * `--trace`: Record a timestamped, line-numbered `bash -x` trace of user-data bash scripts in the guest (`/var/log/ec2pass/userdata-trace.log`). Read it with `ec2pass logs <name> --trace`. See [2.16](#216-logs---user-data-debug-logs) for details and limits.
+* **Readiness and user-data result**: `launch` waits until SSH answers and cloud-init has finished (`done`, `error` or `degraded`). A failing user script does **not** fail the launch: the instance keeps running and `launch` exits `0`, as on EC2. Instead it prints a result report and saves a debug bundle:
+  ```text
+  warning: cloud-init finished with status 'error'. The instance is running; inspect the logs below.
+    detail:
+    ('scripts-user', RuntimeError('Runparts: 1 failures (part-001) in 2 attempted commands'))
+  failed commands (from /var/log/cloud-init.log):
+    /var/lib/cloud/instance/scripts/part-001 exited with code 3
+  last 20 lines of /var/log/cloud-init-output.log:
+    | ...
+  debug bundle: <data dir>/logs/<name>/20261124T153633Z
+  Launched: web-srv
+  ```
+  On success the report is a single `cloud-init: done (user-data completed without errors)` line. In automation, check the result with `ec2pass exec <name> -- cloud-init status` (prints `status: done` or `status: error`); `exec` returns the guest command's exit code.
 * **Live Download Progress Display**:
   ```text
   [ 85%] [Retrieving image] [================>   ] Downloading Amazon Linux 2023.12 LTS (1.4GiB / 1.6GiB)
@@ -86,6 +101,9 @@ ec2pass launch [IMAGE] [OPTIONS]
 
   # Launch with cloud-init and host directory mount
   ec2pass launch al2023 -n web-srv --cloud-init ./init.yaml --mount ./my-web:/var/www/html
+
+  # Debug a user-data script: watch it run and keep a line-by-line trace
+  ec2pass launch al2023 -n ud-test --cloud-init ./setup.sh --watch --trace
   ```
 
 ---
@@ -322,6 +340,53 @@ Displays virtual bridge and NAT interfaces available on the host.
 ```bash
 ec2pass networks [--format <FORMAT>]
 ```
+
+---
+
+### 2.16 `logs` - User-data Debug Logs
+Shows logs for debugging boot and user-data scripts.
+
+* **Syntax**: `ec2pass logs <NAME> [-f] [--cloud-init | --trace | --save]`
+* **Modes**:
+  | Command | Shows | Source | Needs running VM |
+  |---|---|---|---|
+  | `ec2pass logs <name>` | Serial console (bootloader, kernel, systemd) | Host file `<instance dir>/console.log` | No |
+  | `ec2pass logs <name> -f` | Same, following new lines (Ctrl-C to stop) | Host file | No |
+  | `ec2pass logs <name> --cloud-init` | `cloud-init status --long` + `/var/log/cloud-init-output.log` (user-data stdout/stderr) | Guest, over SSH | Yes |
+  | `ec2pass logs <name> --cloud-init -f` | Same, following the output log | Guest, over SSH | Yes |
+  | `ec2pass logs <name> --trace` | Bash xtrace of user-data scripts (launch with `--trace`) | Guest `/var/log/ec2pass/userdata-trace.log` | Yes |
+  | `ec2pass logs <name> --save` | Saves a new debug bundle and prints its path | Guest + host | Yes |
+
+  On Amazon Linux 2023, cloud-init does not echo user-data output to the serial console, so script output is only in `--cloud-init` (and in `launch --watch`, which reads the same log).
+
+* **Trace output** (`launch --trace`):
+  ```text
+  + 1795534387.315191 part-001:3: echo 'DBG-STEP1 start'
+  + 1795534387.316258 part-001:4: greet ec2pass
+  + 1795534387.316290 part-001:2: echo 'hello from ec2pass'
+  + 1795534388.322739 part-001:7: false_cmd_that_does_not_exist
+  + 1795534388.323830 part-001:8: exit 3
+  ```
+  Each line is `+ <epoch seconds> <script>:<line>: <command as executed>`. Your script and its stdout/stderr are not modified: ec2pass adds a cloud-init boothook to vendor-data that sets `BASH_ENV` for `cloud-final.service`, so bash scripts started by cloud-init enable `set -x` with output sent to the trace file.
+  * Traced: scripts whose interpreter is bash (`#!/bin/bash`, `#!/usr/bin/env bash`), including functions they call and bash scripts they start.
+  * Not traced: `#!/bin/sh` and non-bash scripts (Python, etc.), and cloud-config `runcmd` (cloud-init runs it with `sh`).
+  * Off by default because it changes the environment of every bash process started by `cloud-final`.
+
+* **Debug bundle**: written after every `launch` and by `logs --save` to `<data dir>/logs/<name>/<UTC timestamp>/`. Bundles are kept when the instance is purged; delete the directory to remove them.
+  | File | Contents |
+  |---|---|
+  | `cloud-init-status.txt` | `cloud-init status --long` |
+  | `cloud-init-output.log` | User-data script stdout/stderr |
+  | `cloud-init.log` | cloud-init debug log (module order, failures, exit codes) |
+  | `result.json` | cloud-init per-stage errors |
+  | `user-data.txt`, `vendor-data.txt` | Exactly what the guest received (after ec2pass adjustments) |
+  | `user-scripts.txt` | Script parts as written to `/var/lib/cloud/instance/scripts/` |
+  | `analyze-blame.txt` | `cloud-init analyze blame` (time per module) |
+  | `cloud-final.journal.txt` | `journalctl -b -u cloud-final` |
+  | `userdata-trace.log` | Bash trace (only with `--trace`) |
+  | `console.log` | Host copy of the serial console |
+
+* **Re-running user-data**: cloud-init runs user-data once per instance. To test a script again, launch a new instance, or run `ec2pass exec <name> -- sudo cloud-init clean --logs --reboot` (wait for it to boot, then check `logs --cloud-init`).
 
 ---
 

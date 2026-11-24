@@ -24,6 +24,9 @@ pub struct InstanceRecord {
     pub cloud_init_yaml: Option<String>,
     #[serde(default)]
     pub networks: Vec<String>,
+    /// Launched with `--trace`: user-data bash scripts are xtraced in the guest.
+    #[serde(default)]
+    pub trace: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -597,6 +600,7 @@ mod tests {
             mac_address: "52:54:00:12:34:56".to_string(),
             cloud_init_yaml: None,
             networks: Vec::new(),
+            trace: false,
         }
     }
 

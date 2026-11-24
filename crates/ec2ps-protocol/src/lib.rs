@@ -200,6 +200,28 @@ pub enum RpcRequest {
         networks: Vec<String>,
         mounts: Vec<(String, String)>,
         timeout_secs: u64,
+        /// Stream the serial console (boot + user-data output) while waiting.
+        #[serde(default)]
+        watch: bool,
+        /// Record a line-by-line bash xtrace of user-data scripts in the guest.
+        #[serde(default)]
+        trace: bool,
+    },
+    /// Shows instance logs: the host-side serial console by default.
+    Logs {
+        name: String,
+        /// Keep streaming new console lines until the client disconnects.
+        #[serde(default)]
+        follow: bool,
+        /// Show the guest's cloud-init status and output log instead of the console.
+        #[serde(default)]
+        cloud_init: bool,
+        /// Show the guest's user-data xtrace log (instances launched with `--trace`).
+        #[serde(default)]
+        trace: bool,
+        /// Collect a fresh debug bundle on the host and print its path.
+        #[serde(default)]
+        save: bool,
     },
     Start {
         names: Vec<String>,
@@ -314,6 +336,10 @@ pub enum RpcStreamFrame {
         phase: String,
         message: String,
         percent: Option<u8>,
+    },
+    /// A line of log output (console, cloud-init report) to print verbatim on stdout.
+    Log {
+        line: String,
     },
     Response(Box<RpcResponse>),
 }

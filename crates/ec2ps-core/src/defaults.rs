@@ -72,6 +72,9 @@ pub mod timeouts {
     /// Timeout for the lightweight guest metrics probe (`/proc/loadavg`, meminfo).
     pub const GUEST_METRICS_EXEC: Duration = Duration::from_millis(1500);
 
+    /// Poll interval for `ec2pass logs --follow` / `launch --watch` console tailing.
+    pub const LOG_FOLLOW_POLL: Duration = Duration::from_millis(500);
+
     /// CLI polling interval for streamed progress / daemon state.
     pub const CLI_POLL: Duration = Duration::from_millis(100);
 }

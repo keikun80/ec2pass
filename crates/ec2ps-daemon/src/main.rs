@@ -7,6 +7,8 @@
 //! - QEMU / QMP process orchestration
 //! - SSH command execution, file transfer, live host-to-guest directory mounts, snapshots, and clones.
 
+mod debuglog;
+
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::Parser;
@@ -253,6 +255,19 @@ where
     Ok(())
 }
 
+async fn send_log<W>(writer: &mut W, line: &str) -> Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    send_frame(
+        writer,
+        &RpcStreamFrame::Log {
+            line: line.to_string(),
+        },
+    )
+    .await
+}
+
 async fn send_progress<W>(
     writer: &mut W,
     phase: &str,
@@ -458,6 +473,8 @@ where
             networks,
             mounts,
             timeout_secs: req_timeout,
+            watch,
+            trace,
         } => {
             if let Some(ref yaml) = cloud_init_yaml {
                 validate_cloud_init_yaml(yaml)?;
@@ -564,6 +581,7 @@ where
                     default_user: DEFAULT_SSH_USER,
                     ssh_public_key: &pub_key,
                     user_data_yaml: cloud_init_yaml.as_deref(),
+                    trace,
                 },
             )?;
 
@@ -622,6 +640,7 @@ where
                 mac_address: mac_addr,
                 cloud_init_yaml,
                 networks,
+                trace,
             };
 
             // 5. Boot VM with QEMU Driver
@@ -649,10 +668,18 @@ where
             let start_wait = std::time::Instant::now();
             let timeout_secs = if req_timeout == 0 { 300 } else { req_timeout };
             let mut is_ready = false;
+            let mut console = debuglog::ConsoleTail::new(instance_dir.join("console.log"));
+            let mut guest_log = debuglog::GuestLogTail::default();
 
             while start_wait.elapsed() < std::time::Duration::from_secs(timeout_secs) {
                 let elapsed = start_wait.elapsed().as_secs();
                 let pct = (85 + (elapsed as f64 / timeout_secs as f64 * 14.0) as u8).min(99);
+
+                if watch {
+                    for line in console.read_new_lines() {
+                        send_log(writer, &format!("console    | {}", line)).await?;
+                    }
+                }
 
                 // 1. Check if SSH TCP port is open
                 let addr = format!("{}:{}", LOOPBACK, ssh_port);
@@ -677,6 +704,21 @@ where
                     )
                     .await?;
 
+                    if watch {
+                        for line in guest_log
+                            .poll(
+                                &ctx.ssh,
+                                &instance_name,
+                                &instance_dir,
+                                ssh_port,
+                                &record.details.ssh_user,
+                            )
+                            .await
+                        {
+                            send_log(writer, &format!("cloud-init | {}", line)).await?;
+                        }
+                    }
+
                     if let Ok((stdout, _stderr, code)) = ctx
                         .ssh
                         .exec_command(
@@ -684,14 +726,21 @@ where
                             &instance_dir,
                             ssh_port,
                             &record.details.ssh_user,
-                            &["cloud-init status --wait || true".to_string()],
+                            // Non-blocking so the console can be streamed while cloud-init runs.
+                            &["cloud-init status 2>&1 || true".to_string()],
                             None,
                         )
                         .await
                     {
-                        if code == 0 || stdout.contains("done") || stdout.contains("status:") {
-                            is_ready = true;
-                            break;
+                        // A failed user script still yields a booted VM: any final status
+                        // (done/error/degraded) means ready; the outcome is reported afterwards.
+                        if code == 0 || !stdout.is_empty() {
+                            if let Some(status) = debuglog::parse_cloud_init_status(&stdout) {
+                                if debuglog::is_final_status(&status) {
+                                    is_ready = true;
+                                    break;
+                                }
+                            }
                         }
                     }
                 } else {
@@ -722,6 +771,24 @@ where
                     ssh_port,
                     timeout_secs
                 );
+            }
+
+            if watch {
+                for line in console.read_new_lines() {
+                    send_log(writer, &format!("console    | {}", line)).await?;
+                }
+                for line in guest_log
+                    .poll(
+                        &ctx.ssh,
+                        &instance_name,
+                        &instance_dir,
+                        ssh_port,
+                        &record.details.ssh_user,
+                    )
+                    .await
+                {
+                    send_log(writer, &format!("cloud-init | {}", line)).await?;
+                }
             }
 
             record.details.state = InstanceState::Running;
@@ -755,6 +822,29 @@ where
                 Some(100),
             )
             .await?;
+
+            // Report how user-data went and keep a host-side copy of the guest logs.
+            let report_rec = {
+                let store = ctx.store.lock().await;
+                store.data.instances.get(&launched_details.name).cloned()
+            };
+            if let Some(rec) = report_rec {
+                for line in &debuglog::build_launch_report(&ctx.ssh, &rec, !watch).await {
+                    send_log(writer, line).await?;
+                }
+                match debuglog::collect_bundle(&ctx.ssh, &rec, &ctx.data_dir).await {
+                    Ok(dir) => {
+                        send_log(writer, &format!("debug bundle: {}", dir.display())).await?
+                    }
+                    Err(e) => {
+                        send_log(
+                            writer,
+                            &format!("warning: could not save debug bundle: {:#}", e),
+                        )
+                        .await?
+                    }
+                }
+            }
 
             Ok(RpcResponse::Launched(launched_details))
         }
@@ -1080,6 +1170,144 @@ where
                 list.push(rec.details.clone());
             }
             Ok(RpcResponse::InstanceList(list))
+        }
+
+        RpcRequest::Logs {
+            name,
+            follow,
+            cloud_init,
+            trace,
+            save,
+        } => {
+            let rec = {
+                let store = ctx.store.lock().await;
+                store
+                    .data
+                    .instances
+                    .get(&name)
+                    .cloned()
+                    .with_context(|| format!("Instance '{}' does not exist", name))?
+            };
+
+            if save || cloud_init || trace {
+                if rec.details.state != InstanceState::Running {
+                    bail!(
+                        "Instance '{}' is not running. --cloud-init, --trace and --save read logs inside the guest; start it first, or omit them to read the console log.",
+                        name
+                    );
+                }
+                if save {
+                    let dir = debuglog::collect_bundle(&ctx.ssh, &rec, &ctx.data_dir).await?;
+                    return Ok(RpcResponse::OkMessage(format!(
+                        "Debug bundle saved to {}",
+                        dir.display()
+                    )));
+                }
+                if cloud_init {
+                    let (status, _, _) = ctx
+                        .ssh
+                        .exec_command(
+                            &rec.details.name,
+                            &rec.instance_dir,
+                            rec.details.ssh_port,
+                            &rec.details.ssh_user,
+                            &["cloud-init status --long 2>&1".to_string()],
+                            None,
+                        )
+                        .await?;
+                    for line in status.lines() {
+                        send_log(writer, line).await?;
+                    }
+                    send_log(writer, "").await?;
+                    let mut guest_log = debuglog::GuestLogTail::default();
+                    loop {
+                        let lines = guest_log
+                            .poll(
+                                &ctx.ssh,
+                                &rec.details.name,
+                                &rec.instance_dir,
+                                rec.details.ssh_port,
+                                &rec.details.ssh_user,
+                            )
+                            .await;
+                        let mut sent = Ok(());
+                        for line in &lines {
+                            sent = send_log(writer, line).await;
+                            if sent.is_err() {
+                                break;
+                            }
+                        }
+                        if !follow {
+                            sent?;
+                            return Ok(RpcResponse::OkMessage(String::new()));
+                        }
+                        if lines.is_empty() {
+                            sent = send_progress(writer, "Following", "", None).await;
+                        }
+                        if sent.is_err() {
+                            return Ok(RpcResponse::OkMessage(String::new()));
+                        }
+                        tokio::time::sleep(timeouts::SSH_READY_POLL).await;
+                    }
+                }
+                let cmd = format!(
+                    "sudo cat {} 2>/dev/null || echo 'No trace log found. Launch the instance with --trace to record one.'",
+                    debuglog::TRACE_LOG_PATH
+                );
+                let (stdout, _stderr, _code) = ctx
+                    .ssh
+                    .exec_command(
+                        &rec.details.name,
+                        &rec.instance_dir,
+                        rec.details.ssh_port,
+                        &rec.details.ssh_user,
+                        &[cmd],
+                        None,
+                    )
+                    .await?;
+                for line in stdout.lines() {
+                    send_log(writer, line).await?;
+                }
+                return Ok(RpcResponse::OkMessage(String::new()));
+            }
+
+            let mut tail = debuglog::ConsoleTail::new(rec.instance_dir.join("console.log"));
+            for line in tail.read_new_lines() {
+                send_log(writer, &line).await?;
+            }
+            if follow {
+                // Runs until the client disconnects; an idle heartbeat detects that.
+                let mut idle_polls = 0u32;
+                loop {
+                    tokio::time::sleep(timeouts::LOG_FOLLOW_POLL).await;
+                    let lines = tail.read_new_lines();
+                    let sent = if lines.is_empty() {
+                        idle_polls += 1;
+                        if idle_polls.is_multiple_of(10) {
+                            send_progress(writer, "Following", "", None).await
+                        } else {
+                            Ok(())
+                        }
+                    } else {
+                        idle_polls = 0;
+                        let mut r = Ok(());
+                        for line in &lines {
+                            r = send_log(writer, line).await;
+                            if r.is_err() {
+                                break;
+                            }
+                        }
+                        r
+                    };
+                    if sent.is_err() {
+                        return Ok(RpcResponse::OkMessage(String::new()));
+                    }
+                }
+            }
+            if let Some(rest) = tail.flush_partial() {
+                send_log(writer, &rest).await?;
+            }
+            Ok(RpcResponse::OkMessage(String::new()))
         }
 
         RpcRequest::Exec {
@@ -1550,6 +1778,7 @@ where
                     default_user: &dst_rec.details.ssh_user,
                     ssh_public_key: &pub_key,
                     user_data_yaml: dst_rec.cloud_init_yaml.as_deref(),
+                    trace: dst_rec.trace,
                 },
             )?;
 

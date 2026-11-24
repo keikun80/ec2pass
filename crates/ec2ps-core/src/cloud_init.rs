@@ -16,6 +16,8 @@ pub struct CloudInitConfig<'a> {
     pub default_user: &'a str,
     pub ssh_public_key: &'a str,
     pub user_data_yaml: Option<&'a str>,
+    /// Add a boothook that xtraces user-data bash scripts into `/var/log/ec2pass/userdata-trace.log`.
+    pub trace: bool,
 }
 
 /// How cloud-init will interpret a user-data payload, decided by its first line
@@ -75,6 +77,36 @@ pub fn validate_cloud_init_yaml(yaml_str: &str) -> Result<()> {
         bail!("cloud-init configuration must be a valid YAML mapping (dictionary)");
     }
     Ok(())
+}
+
+/// Boothook (runs every boot, cannot be overridden by user-data keys) that makes every bash
+/// script started by `cloud-final` (i.e. user-data scripts) source a BASH_ENV file enabling
+/// `set -x`, with timestamped, line-numbered trace output written to a separate file so the
+/// script's own stdout/stderr are unchanged.
+const TRACE_BOOTHOOK: &str = r#"#!/bin/sh
+mkdir -p /var/log/ec2pass /run/systemd/system/cloud-final.service.d
+cat > /run/ec2pass-trace.sh <<'TRACE'
+exec {BASH_XTRACEFD}>>/var/log/ec2pass/userdata-trace.log
+PS4='+ ${EPOCHREALTIME:-} ${BASH_SOURCE##*/}:${LINENO}: '
+set -x
+TRACE
+printf '[Service]\nEnvironment=BASH_ENV=/run/ec2pass-trace.sh\n' > /run/systemd/system/cloud-final.service.d/ec2pass-trace.conf
+systemctl daemon-reload
+"#;
+
+const VENDOR_MIME_BOUNDARY: &str = "==EC2PASS-VENDOR==";
+
+/// Wraps the vendor cloud-config and the trace boothook into a MIME multipart document.
+fn vendor_data_with_trace(vendor_cloud_config: &str) -> String {
+    format!(
+        "Content-Type: multipart/mixed; boundary=\"{b}\"\nMIME-Version: 1.0\n\n\
+         --{b}\nContent-Type: text/cloud-config; charset=\"us-ascii\"\n\n{cc}\n\
+         --{b}\nContent-Type: text/cloud-boothook; charset=\"us-ascii\"\n\n{bh}\n\
+         --{b}--\n",
+        b = VENDOR_MIME_BOUNDARY,
+        cc = vendor_cloud_config.trim_end(),
+        bh = TRACE_BOOTHOOK.trim_end()
+    )
 }
 
 /// Supplementary groups for the ec2pass login user (missing groups are skipped by cloud-init).
@@ -236,6 +268,12 @@ ssh_authorized_keys:
         ),
     };
 
+    let vendor_data = if cfg.trace {
+        vendor_data_with_trace(&vendor_data)
+    } else {
+        vendor_data
+    };
+
     let files = vec![
         IsoFile::new("meta-data", meta_data.into_bytes()),
         IsoFile::new("vendor-data", vendor_data.into_bytes()),
@@ -331,6 +369,7 @@ runcmd:
             default_user: crate::defaults::DEFAULT_SSH_USER,
             ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey",
             user_data_yaml: Some(script),
+            trace: false,
         };
         generate_al2023_seed_iso(&tmp_iso, &cfg).unwrap();
         let iso_str = String::from_utf8_lossy(&std::fs::read(&tmp_iso).unwrap()).to_string();
@@ -346,6 +385,7 @@ runcmd:
             default_user: "ec2-user",
             ssh_public_key: "ssh-ed25519 AAAAKEY ec2pass",
             user_data_yaml: None,
+            trace: false,
         }
     }
 
@@ -428,6 +468,27 @@ runcmd:
     }
 
     #[test]
+    fn test_trace_adds_boothook_only_when_enabled() {
+        let vd = vendor_data_with_trace("#cloud-config\nusers: [default]\n");
+        assert!(vd.starts_with("Content-Type: multipart/mixed;"));
+        assert!(vd.contains("Content-Type: text/cloud-config"));
+        assert!(vd.contains("Content-Type: text/cloud-boothook"));
+        assert!(vd.contains("Environment=BASH_ENV=/run/ec2pass-trace.sh"));
+        assert!(vd.trim_end().ends_with("--==EC2PASS-VENDOR==--"));
+
+        let tmp_iso = std::env::temp_dir().join(format!("seed_tr_{}.iso", rand::random::<u32>()));
+        let mut cfg = merge_cfg();
+        generate_al2023_seed_iso(&tmp_iso, &cfg).unwrap();
+        let plain = String::from_utf8_lossy(&std::fs::read(&tmp_iso).unwrap()).to_string();
+        assert!(!plain.contains("cloud-boothook"));
+        cfg.trace = true;
+        generate_al2023_seed_iso(&tmp_iso, &cfg).unwrap();
+        let traced = String::from_utf8_lossy(&std::fs::read(&tmp_iso).unwrap()).to_string();
+        assert!(traced.contains("cloud-boothook"));
+        let _ = std::fs::remove_file(&tmp_iso);
+    }
+
+    #[test]
     fn test_cloud_init_vendor_data_has_multi_distro_groups() {
         let tmp_iso = std::env::temp_dir().join(format!("seed_test_{}.iso", rand::random::<u32>()));
         let cfg = CloudInitConfig {
@@ -436,6 +497,7 @@ runcmd:
             default_user: crate::defaults::DEFAULT_SSH_USER,
             ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey",
             user_data_yaml: None,
+            trace: false,
         };
         assert!(generate_al2023_seed_iso(&tmp_iso, &cfg).is_ok());
 
