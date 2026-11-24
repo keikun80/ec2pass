@@ -77,6 +77,93 @@ pub fn validate_cloud_init_yaml(yaml_str: &str) -> Result<()> {
     Ok(())
 }
 
+/// Supplementary groups for the ec2pass login user (missing groups are skipped by cloud-init).
+const EC2PASS_USER_GROUPS: &[&str] = &["wheel", "sudo", "adm", "systemd-journal"];
+
+/// The ec2pass login user entry, identical to the one in vendor-data.
+fn ec2pass_user_entry(cfg: &CloudInitConfig<'_>) -> serde_yaml::Value {
+    use serde_yaml::Value;
+    let mut m = serde_yaml::Mapping::new();
+    m.insert("name".into(), cfg.default_user.into());
+    m.insert("gecos".into(), "ec2pass Cloud User".into());
+    m.insert("sudo".into(), "ALL=(ALL) NOPASSWD:ALL".into());
+    m.insert(
+        "groups".into(),
+        Value::Sequence(EC2PASS_USER_GROUPS.iter().map(|g| (*g).into()).collect()),
+    );
+    m.insert("shell".into(), "/bin/bash".into());
+    m.insert("lock_passwd".into(), true.into());
+    m.insert(
+        "ssh_authorized_keys".into(),
+        Value::Sequence(vec![cfg.ssh_public_key.trim().into()]),
+    );
+    Value::Mapping(m)
+}
+
+/// cloud-init lets user-data *replace* vendor-data keys, so a user-supplied top-level `users:`
+/// would drop the ec2pass login user and lock the daemon out of the VM. If `users:` is present,
+/// returns the cloud-config re-serialized with the ec2pass user kept (an existing entry of the
+/// same name only gets the ec2pass key appended; the user's own settings win). Returns `None`
+/// when no change is needed, so the user's original text is used verbatim.
+fn ensure_ec2pass_user_in_users(body: &str, cfg: &CloudInitConfig<'_>) -> Result<Option<String>> {
+    use serde_yaml::Value;
+    let mut doc: Value = serde_yaml::from_str(body).context("Invalid cloud-config YAML")?;
+    let Some(root) = doc.as_mapping_mut() else {
+        return Ok(None);
+    };
+    let Some(users) = root.get_mut("users") else {
+        return Ok(None);
+    };
+
+    // cloud-init also accepts a comma-separated string: "default, alice".
+    if let Value::String(s) = users {
+        *users = Value::Sequence(
+            s.split(',')
+                .map(|n| n.trim())
+                .filter(|n| !n.is_empty())
+                .map(|n| n.into())
+                .collect(),
+        );
+    }
+    let Value::Sequence(list) = users else {
+        // Legacy/unknown shapes are left to cloud-init untouched.
+        return Ok(None);
+    };
+
+    let key: Value = cfg.ssh_public_key.trim().into();
+    let mut found = false;
+    for entry in list.iter_mut() {
+        match entry {
+            Value::String(name) if name == cfg.default_user => {
+                *entry = ec2pass_user_entry(cfg);
+                found = true;
+            }
+            Value::Mapping(m)
+                if m.get("name").and_then(Value::as_str) == Some(cfg.default_user) =>
+            {
+                let keys = m
+                    .entry("ssh_authorized_keys".into())
+                    .or_insert_with(|| Value::Sequence(Vec::new()));
+                if let Value::Sequence(k) = keys {
+                    if !k.contains(&key) {
+                        k.push(key.clone());
+                    }
+                }
+                found = true;
+            }
+            _ => {}
+        }
+    }
+    if !found {
+        list.push(ec2pass_user_entry(cfg));
+    }
+
+    Ok(Some(format!(
+        "#cloud-config\n{}",
+        serde_yaml::to_string(&doc).context("Failed to serialize cloud-config")?
+    )))
+}
+
 /// Builds the `seed.iso` (`cidata` volume label) for an Amazon Linux 2023 instance.
 pub fn generate_al2023_seed_iso(output_iso_path: &Path, cfg: &CloudInitConfig<'_>) -> Result<()> {
     // 1. meta-data
@@ -98,7 +185,7 @@ users:
   - name: {user}
     gecos: ec2pass Cloud User
     sudo: ALL=(ALL) NOPASSWD:ALL
-    groups: [wheel, sudo, adm, systemd-journal]
+    groups: [{groups}]
     shell: /bin/bash
     lock_passwd: true
     ssh_authorized_keys:
@@ -109,6 +196,7 @@ runcmd:
   - [ sh, -c, "restorecon -R /home/{user}/.ssh 2>/dev/null || true" ]
 "#,
         user = cfg.default_user,
+        groups = EC2PASS_USER_GROUPS.join(", "),
         pub_key = cfg.ssh_public_key.trim()
     );
 
@@ -120,8 +208,15 @@ runcmd:
             let body = strip_bom(custom).trim_start();
             match classify_user_data(body) {
                 UserDataKind::Passthrough => body.to_string(),
-                UserDataKind::CloudConfig => format!("{}\n", body.trim_end()),
-                UserDataKind::Headerless => format!("#cloud-config\n{}\n", body.trim_end()),
+                UserDataKind::CloudConfig | UserDataKind::Headerless => {
+                    match ensure_ec2pass_user_in_users(body, cfg)? {
+                        Some(merged) => merged,
+                        None if classify_user_data(body) == UserDataKind::CloudConfig => {
+                            format!("{}\n", body.trim_end())
+                        }
+                        None => format!("#cloud-config\n{}\n", body.trim_end()),
+                    }
+                }
             }
         }
         _ => format!(
@@ -233,6 +328,84 @@ runcmd:
         let iso_str = String::from_utf8_lossy(&std::fs::read(&tmp_iso).unwrap()).to_string();
         assert!(iso_str.contains("#!/bin/bash\necho EC2PASS_MARKER"));
         assert!(!iso_str.contains("#cloud-config\n#!/bin/bash"));
+        let _ = std::fs::remove_file(&tmp_iso);
+    }
+
+    fn merge_cfg() -> CloudInitConfig<'static> {
+        CloudInitConfig {
+            instance_id: "i-test",
+            hostname: "h",
+            default_user: "ec2-user",
+            ssh_public_key: "ssh-ed25519 AAAAKEY ec2pass",
+            user_data_yaml: None,
+        }
+    }
+
+    fn users_of(out: &str) -> Vec<serde_yaml::Value> {
+        assert!(out.starts_with("#cloud-config\n"));
+        let v: serde_yaml::Value = serde_yaml::from_str(out).unwrap();
+        v["users"].as_sequence().unwrap().clone()
+    }
+
+    #[test]
+    fn test_users_override_keeps_ec2pass_user() {
+        let ud = "#cloud-config\nusers:\n  - name: alice\n    groups: [wheel]\npackages: [git]\n";
+        let out = ensure_ec2pass_user_in_users(ud, &merge_cfg())
+            .unwrap()
+            .unwrap();
+        let users = users_of(&out);
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0]["name"], "alice");
+        assert_eq!(users[1]["name"], "ec2-user");
+        assert_eq!(
+            users[1]["ssh_authorized_keys"][0],
+            "ssh-ed25519 AAAAKEY ec2pass"
+        );
+        // Other keys survive the round-trip.
+        let v: serde_yaml::Value = serde_yaml::from_str(&out).unwrap();
+        assert_eq!(v["packages"][0], "git");
+    }
+
+    #[test]
+    fn test_existing_ec2_user_entry_only_gets_key() {
+        let ud = "#cloud-config\nusers:\n  - default\n  - name: ec2-user\n    sudo: false\n    ssh_authorized_keys: [ssh-rsa USERKEY]\n";
+        let out = ensure_ec2pass_user_in_users(ud, &merge_cfg())
+            .unwrap()
+            .unwrap();
+        let users = users_of(&out);
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[1]["sudo"], false); // user's choice preserved
+        let keys = users[1]["ssh_authorized_keys"].as_sequence().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0], "ssh-rsa USERKEY");
+    }
+
+    #[test]
+    fn test_users_string_form_and_bare_name() {
+        let ud = "users: default, ec2-user, bob";
+        let out = ensure_ec2pass_user_in_users(ud, &merge_cfg())
+            .unwrap()
+            .unwrap();
+        let users = users_of(&out);
+        assert_eq!(users.len(), 3);
+        assert_eq!(users[0], "default");
+        assert_eq!(users[1]["name"], "ec2-user");
+        assert_eq!(users[2], "bob");
+    }
+
+    #[test]
+    fn test_no_users_key_leaves_text_verbatim() {
+        let ud = "#cloud-config\n# keep my comment\npackages: [git]\n";
+        assert!(ensure_ec2pass_user_in_users(ud, &merge_cfg())
+            .unwrap()
+            .is_none());
+
+        let tmp_iso = std::env::temp_dir().join(format!("seed_c_{}.iso", rand::random::<u32>()));
+        let mut cfg = merge_cfg();
+        cfg.user_data_yaml = Some(ud);
+        generate_al2023_seed_iso(&tmp_iso, &cfg).unwrap();
+        let iso = String::from_utf8_lossy(&std::fs::read(&tmp_iso).unwrap()).to_string();
+        assert!(iso.contains("# keep my comment"));
         let _ = std::fs::remove_file(&tmp_iso);
     }
 

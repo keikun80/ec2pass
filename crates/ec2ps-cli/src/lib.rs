@@ -64,7 +64,7 @@ enum Commands {
         #[arg(short, long, default_value_t = 1)]
         cpus: u32,
 
-        /// Amount of memory to allocate (Minimum: 128M, Default: 1G)
+        /// Amount of memory to allocate (Minimum: 256M, Default: 1G)
         #[arg(short, long, default_value = "1G")]
         memory: String,
 

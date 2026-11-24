@@ -16,6 +16,8 @@ A `user-data` file typically takes one of two forms:
 * `#cloud-config` (or no header at all) is validated as a YAML mapping before boot. A file without a header gets `#cloud-config` added.
 * `#!` scripts, MIME multipart (`Content-Type:`), `#include`, `#cloud-boothook`, `#part-handler`, `#cloud-config-archive` and `## template: jinja` are passed to cloud-init unchanged.
 * Binary (gzip-compressed) user-data is not supported; pass the uncompressed text.
+* If a `#cloud-config` file defines top-level `users:`, ec2pass keeps its own `ec2-user` login in that list (cloud-init lets user-data replace vendor-data keys, which would otherwise lock ec2pass out). An existing `ec2-user` entry only gets the ec2pass SSH key added; your settings for it are kept. The YAML is re-serialized in this case, so comments are dropped.
+* Limitation: `users:` inside a MIME multipart or `#include` payload is not adjusted. Include an `ec2-user` entry with the key from `<ec2pass data dir>/ssh-keys/id_ed25519_ec2pass.pub` yourself, or `ec2pass exec`/`shell` will not be able to log in.
 
 ---
 
