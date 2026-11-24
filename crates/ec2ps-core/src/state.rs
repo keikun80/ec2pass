@@ -27,6 +27,7 @@ pub struct InstanceRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PersistentState {
     pub settings: BTreeMap<String, String>,
     pub instances: BTreeMap<String, InstanceRecord>,
@@ -81,9 +82,7 @@ impl StateStore {
         std::fs::create_dir_all(data_dir)?;
         let state_file = data_dir.join("state.json");
         let data = if state_file.exists() {
-            let content = std::fs::read_to_string(&state_file)
-                .with_context(|| format!("Failed to read state file {:?}", state_file))?;
-            serde_json::from_str(&content).unwrap_or_default()
+            Self::read_state_or_recover(&state_file)?
         } else {
             PersistentState::default()
         };
@@ -93,10 +92,68 @@ impl StateStore {
         Ok(store)
     }
 
+    fn backup_path(state_file: &Path) -> PathBuf {
+        state_file.with_extension("json.bak")
+    }
+
+    fn parse_state_file(path: &Path) -> Result<PersistentState> {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read state file {:?}", path))?;
+        serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse state file {:?}", path))
+    }
+
+    /// Loads `state.json`. If it is corrupt, keeps a `state.json.corrupt-<unix-ts>` copy and
+    /// recovers from `state.json.bak`; if no usable backup exists, fails instead of silently
+    /// starting from an empty state (which would orphan every instance on disk).
+    fn read_state_or_recover(state_file: &Path) -> Result<PersistentState> {
+        let err = match Self::parse_state_file(state_file) {
+            Ok(data) => return Ok(data),
+            Err(e) => e,
+        };
+
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        let corrupt_copy = state_file.with_extension(format!("json.corrupt-{}", ts));
+        let _ = std::fs::copy(state_file, &corrupt_copy);
+
+        let backup = Self::backup_path(state_file);
+        if backup.exists() {
+            if let Ok(data) = Self::parse_state_file(&backup) {
+                tracing::warn!(
+                    "{:#}. Recovered from {:?}; corrupt file kept at {:?}",
+                    err,
+                    backup,
+                    corrupt_copy
+                );
+                return Ok(data);
+            }
+        }
+
+        bail!(
+            "{:#}. No usable backup found. A copy was saved to {:?}. Repair {:?}, or delete it to start with an empty state.",
+            err,
+            corrupt_copy,
+            state_file
+        )
+    }
+
+    /// Atomically writes state (tmp file + fsync + rename), keeping the previous version
+    /// as `state.json.bak`.
     pub fn save(&self) -> Result<()> {
+        use std::io::Write;
         let tmp = self.state_file.with_extension("json.tmp");
         let content = serde_json::to_string_pretty(&self.data)?;
-        std::fs::write(&tmp, content)?;
+        {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(content.as_bytes())?;
+            f.sync_all()?;
+        }
+        if self.state_file.exists() && Self::parse_state_file(&self.state_file).is_ok() {
+            let _ = std::fs::copy(&self.state_file, Self::backup_path(&self.state_file));
+        }
         std::fs::rename(&tmp, &self.state_file)?;
         Ok(())
     }
@@ -516,6 +573,65 @@ mod tests {
             cloud_init_yaml: None,
             networks: Vec::new(),
         }
+    }
+
+    #[test]
+    fn test_corrupt_state_recovers_from_backup() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_corrupt_{}", rand::random::<u32>()));
+        {
+            let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
+            let rec = dummy_instance_record("keep-me", &tmp_dir, InstanceState::Stopped, 1);
+            store.data.instances.insert("keep-me".to_string(), rec);
+            store.save().unwrap();
+            store.save().unwrap(); // .bak now holds the instance too
+        }
+        std::fs::write(tmp_dir.join("state.json"), "{ truncated").unwrap();
+
+        let store = StateStore::load_or_create(&tmp_dir).unwrap();
+        assert!(store.data.instances.contains_key("keep-me"));
+        let corrupt_copies = std::fs::read_dir(&tmp_dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("corrupt-")
+            })
+            .count();
+        assert_eq!(corrupt_copies, 1);
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_corrupt_state_without_backup_errors_instead_of_reset() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_corrupt_nb_{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        std::fs::write(tmp_dir.join("state.json"), "not json").unwrap();
+
+        assert!(StateStore::load_or_create(&tmp_dir).is_err());
+        // Original file must be left untouched for manual repair.
+        assert_eq!(
+            std::fs::read_to_string(tmp_dir.join("state.json")).unwrap(),
+            "not json"
+        );
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_state_missing_fields_use_defaults() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_partial_{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        std::fs::write(tmp_dir.join("state.json"), r#"{"instances":{}}"#).unwrap();
+        let store = StateStore::load_or_create(&tmp_dir).unwrap();
+        assert_eq!(
+            store.data.next_ssh_port,
+            crate::defaults::DEFAULT_SSH_PORT_BASE
+        );
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
