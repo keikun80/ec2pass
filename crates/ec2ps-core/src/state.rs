@@ -47,8 +47,8 @@ impl Default for PersistentState {
             settings,
             instances: BTreeMap::new(),
             aliases: BTreeMap::new(),
-            next_ssh_port: 10022,
-            next_qmp_port: 14444,
+            next_ssh_port: crate::defaults::DEFAULT_SSH_PORT_BASE,
+            next_qmp_port: crate::defaults::DEFAULT_QMP_PORT_BASE,
         }
     }
 }
@@ -93,7 +93,7 @@ impl StateStore {
 
     /// Returns the guest IPv4 for QEMU user-mode SLIRP networking
     pub fn allocate_guest_ip(&self) -> String {
-        "10.0.2.15".to_string()
+        crate::defaults::SLIRP_GUEST_IP.to_string()
     }
 
     /// Generates a deterministic KVM/QEMU locally administered MAC address (`52:54:00:xx:xx:xx`)
@@ -148,8 +148,11 @@ impl StateStore {
                     }
                     "memory" => {
                         let bytes = parse_byte_size(value)?;
-                        if bytes < 128 * 1024 * 1024 {
-                            bail!("Memory size must be at least 128MiB");
+                        if bytes < crate::defaults::MIN_MEMORY_BYTES {
+                            bail!(
+                                "Memory size must be at least {}",
+                                format_bytes(crate::defaults::MIN_MEMORY_BYTES)
+                            );
                         }
                         rec.details.memory_total_bytes = bytes;
                     }

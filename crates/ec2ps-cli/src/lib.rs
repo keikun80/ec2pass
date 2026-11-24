@@ -10,13 +10,13 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use ec2ps_core::defaults::timeouts;
 use ec2ps_protocol::{
     format_catalog_find, format_instance_info, format_instance_list, parse_byte_size,
     render_ascii_table, render_progress_bar, OutputFormat, RpcRequest, RpcResponse, RpcStreamFrame,
 };
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
-use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
@@ -1208,7 +1208,7 @@ async fn connect_or_spawn_daemon(addr: &str) -> Result<TcpStream> {
                     .spawn();
 
                 for _ in 0..50 {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(timeouts::CLI_POLL).await;
                     if let Ok(stream) = TcpStream::connect(addr).await {
                         return Ok(stream);
                     }
@@ -1248,7 +1248,7 @@ async fn connect_or_spawn_pipe_daemon(
                     .spawn();
 
                 for _ in 0..50 {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(timeouts::CLI_POLL).await;
                     if let Ok(client) = ClientOptions::new().open(pipe_name) {
                         return Ok(client);
                     }
@@ -1392,7 +1392,7 @@ where
     let mut current_status = default_prompt_for_req(&req);
     let mut retrieving_progress: Option<(u8, String)> = None;
 
-    let mut interval = tokio::time::interval(Duration::from_millis(100));
+    let mut interval = tokio::time::interval(timeouts::CLI_POLL);
     let mut lines = BufReader::new(reader).lines();
 
     loop {

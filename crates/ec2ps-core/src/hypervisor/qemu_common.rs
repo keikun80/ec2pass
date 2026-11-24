@@ -1,6 +1,7 @@
 //! Common QEMU hypervisor implementation and process / QMP socket manager.
 
 use super::guide::get_hypervisor_install_guide;
+use crate::defaults::{timeouts, LOOPBACK, MIN_MEMORY_BYTES};
 use crate::state::InstanceRecord;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -108,16 +109,16 @@ impl QemuDriver {
 
     /// Sends a raw QMP command payload, negotiates greeting/caps, and waits for `return` or `error` reply.
     pub async fn send_qmp_execute(&self, qmp_port: u16, payload: &str) -> Result<String> {
-        let addr = format!("127.0.0.1:{}", qmp_port);
+        let addr = format!("{}:{}", LOOPBACK, qmp_port);
         let mut stream = None;
-        for i in 0..10 {
+        for i in 0..timeouts::QMP_CONNECT_ATTEMPTS {
             match TcpStream::connect(&addr).await {
                 Ok(s) => {
                     stream = Some(s);
                     break;
                 }
-                Err(_) if i < 9 => {
-                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                Err(_) if i + 1 < timeouts::QMP_CONNECT_ATTEMPTS => {
+                    tokio::time::sleep(timeouts::QMP_POLL).await;
                 }
                 Err(e) => {
                     return Err(e)
@@ -230,7 +231,7 @@ impl QemuDriver {
 
     /// Builds the full command line argument list for an Amazon Linux 2023 VM.
     pub fn build_qemu_args(&self, rec: &InstanceRecord) -> Vec<String> {
-        let mem_mib = (rec.details.memory_total_bytes / (1024 * 1024)).max(256);
+        let mem_mib = rec.details.memory_total_bytes.max(MIN_MEMORY_BYTES) / (1024 * 1024);
 
         let mut args = vec![
             "-name".to_string(),
@@ -247,7 +248,7 @@ impl QemuDriver {
             "none".to_string(),
             // QMP Control Socket for lifecycle management
             "-qmp".to_string(),
-            format!("tcp:127.0.0.1:{},server,nowait", rec.qmp_port),
+            format!("tcp:{}:{},server,nowait", LOOPBACK, rec.qmp_port),
             // Primary VirtIO Root Disk (QCOW2 overlay backed by AL2023 base image)
             "-drive".to_string(),
             format!(
@@ -263,8 +264,8 @@ impl QemuDriver {
             // VirtIO Network with user-mode SSH port forwarding
             "-netdev".to_string(),
             format!(
-                "user,id=net0,hostfwd=tcp:127.0.0.1:{}-:22",
-                rec.details.ssh_port
+                "user,id=net0,hostfwd=tcp:{}:{}-:22",
+                LOOPBACK, rec.details.ssh_port
             ),
             "-device".to_string(),
             format!("virtio-net-pci,netdev=net0,mac={}", rec.mac_address),
@@ -450,21 +451,21 @@ impl super::VirtualMachineDriver for QemuDriver {
                 .await;
         }
 
-        // Wait for the QEMU process to cleanly exit and release disk locks (up to 5 seconds)
-        let qmp_addr = format!("127.0.0.1:{}", rec.qmp_port);
+        // Wait for the QEMU process to cleanly exit and release disk locks
+        let qmp_addr = format!("{}:{}", LOOPBACK, rec.qmp_port);
         let start = std::time::Instant::now();
-        while start.elapsed() < std::time::Duration::from_secs(5) {
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        while start.elapsed() < timeouts::QMP_SHUTDOWN_WAIT {
+            tokio::time::sleep(timeouts::QMP_POLL).await;
             if tokio::net::TcpStream::connect(&qmp_addr).await.is_err() {
                 // Ensure OS file lock is completely released
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                tokio::time::sleep(timeouts::QEMU_LOCK_RELEASE).await;
                 return Ok(());
             }
         }
 
-        // If still running after 5s, force quit via QMP
+        // If still running after the grace period, force quit via QMP
         let _ = self.send_qmp_command(rec.qmp_port, "quit").await;
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tokio::time::sleep(timeouts::QEMU_FORCE_QUIT_SETTLE).await;
         Ok(())
     }
 
@@ -477,7 +478,7 @@ impl super::VirtualMachineDriver for QemuDriver {
     }
 
     async fn take_disk_snapshot(&self, disk_path: &Path, snapshot_name: &str) -> Result<()> {
-        for _ in 1..=6 {
+        for _ in 1..=timeouts::DISK_SNAPSHOT_MAX_ATTEMPTS {
             let status = Command::new(&self.qemu_img_bin)
                 .args([
                     "snapshot",
@@ -490,7 +491,7 @@ impl super::VirtualMachineDriver for QemuDriver {
             if status.success() {
                 return Ok(());
             }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(timeouts::DISK_SNAPSHOT_RETRY_DELAY).await;
         }
         bail!("qemu-img snapshot -c failed for {:?}", disk_path);
     }

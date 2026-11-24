@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod cloud_init;
+pub mod defaults;
 pub mod driver;
 pub mod hypervisor;
 pub mod petname;

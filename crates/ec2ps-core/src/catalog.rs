@@ -218,7 +218,7 @@ impl ImageVault {
         let mut versions: Vec<String> = Vec::new();
 
         let client = match reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(crate::defaults::timeouts::HTTP_PROBE)
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()
         {
@@ -363,7 +363,7 @@ impl ImageVault {
         };
 
         if let Ok(client) = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(crate::defaults::timeouts::HTTP_PROBE)
             .build()
         {
             if let Ok(resp) = client.get(cdn_url).send().await {
@@ -434,7 +434,7 @@ impl ImageVault {
         };
 
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(8))
+            .timeout(crate::defaults::timeouts::HTTP_RSS)
             .build()
             .unwrap_or_default();
 

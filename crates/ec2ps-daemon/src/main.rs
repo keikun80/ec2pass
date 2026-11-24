@@ -13,6 +13,7 @@ use clap::Parser;
 use ec2ps_core::catalog::ImageVault;
 use ec2ps_core::cloud_init::{generate_al2023_seed_iso, validate_cloud_init_yaml, CloudInitConfig};
 use ec2ps_core::default_data_dir;
+use ec2ps_core::defaults::{timeouts, LOOPBACK};
 use ec2ps_core::driver::VirtualMachineDriver;
 use ec2ps_core::petname::generate_petname;
 use ec2ps_core::ssh::{copy_dir_recursive, SshManager};
@@ -673,11 +674,11 @@ where
                 let elapsed = start_wait.elapsed().as_secs();
                 let pct = (85 + (elapsed as f64 / timeout_secs as f64 * 14.0) as u8).min(99);
 
-                // 1. Check if SSH TCP port is open (1.5s timeout)
-                let addr = format!("127.0.0.1:{}", ssh_port);
+                // 1. Check if SSH TCP port is open
+                let addr = format!("{}:{}", LOOPBACK, ssh_port);
                 let tcp_ok = matches!(
                     tokio::time::timeout(
-                        std::time::Duration::from_millis(1500),
+                        timeouts::SSH_TCP_PROBE,
                         tokio::net::TcpStream::connect(&addr),
                     )
                     .await,
@@ -726,7 +727,7 @@ where
                     .await?;
                 }
 
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(timeouts::SSH_READY_POLL).await;
             }
 
             if !is_ready {
@@ -1170,7 +1171,7 @@ where
 
             Ok(RpcResponse::ShellConnection {
                 instance: rec.details.clone(),
-                ssh_host: "127.0.0.1".to_string(),
+                ssh_host: LOOPBACK.to_string(),
                 ssh_port: rec.details.ssh_port,
                 ssh_user: rec.details.ssh_user.clone(),
                 ssh_key_path: rec.details.ssh_key_path.clone(),
@@ -1736,7 +1737,7 @@ async fn collect_instance_metrics(
     ];
 
     if let Ok(Ok((stdout, _stderr, code))) = tokio::time::timeout(
-        std::time::Duration::from_millis(1500),
+        timeouts::GUEST_METRICS_EXEC,
         ssh.exec_command(
             &rec.details.name,
             &rec.instance_dir,

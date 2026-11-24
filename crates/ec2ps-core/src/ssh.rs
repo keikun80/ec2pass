@@ -8,6 +8,8 @@ use ring::signature::KeyPair;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
+use crate::defaults::{timeouts, LOOPBACK};
+
 pub struct SshManager {
     _key_dir: PathBuf,
     private_key_path: PathBuf,
@@ -132,7 +134,7 @@ impl SshManager {
         };
 
         let mut last_res = (String::new(), String::new(), 1);
-        for attempt in 1..=6 {
+        for attempt in 1..=timeouts::SSH_MAX_ATTEMPTS {
             let output = Command::new("ssh")
                 .args([
                     "-i",
@@ -147,7 +149,7 @@ impl SshManager {
                     "LogLevel=ERROR",
                     "-o",
                     "ConnectTimeout=10",
-                    &format!("{}@127.0.0.1", ssh_user),
+                    &format!("{}@{}", ssh_user, LOOPBACK),
                     &remote_cmd,
                 ])
                 .output()
@@ -160,14 +162,14 @@ impl SshManager {
             last_res = (stdout, stderr, code);
 
             if code == 255
-                && attempt < 6
+                && attempt < timeouts::SSH_MAX_ATTEMPTS
                 && (last_res.1.contains("banner exchange")
                     || last_res.1.contains("Connection refused")
                     || last_res.1.contains("Connection reset")
                     || last_res.1.contains("kex_exchange_identification")
                     || last_res.1.contains("closed by remote host"))
             {
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                tokio::time::sleep(timeouts::SSH_RETRY_DELAY).await;
                 continue;
             }
             break;
@@ -193,10 +195,10 @@ impl SshManager {
             attempts += 1;
             let elapsed = start.elapsed().as_secs();
 
-            // 1. Check if SSH TCP port is open (1.5s timeout)
-            let addr = format!("127.0.0.1:{}", ssh_port);
+            // 1. Check if SSH TCP port is open
+            let addr = format!("{}:{}", LOOPBACK, ssh_port);
             if let Ok(Ok(_)) = tokio::time::timeout(
-                std::time::Duration::from_millis(1500),
+                timeouts::SSH_TCP_PROBE,
                 tokio::net::TcpStream::connect(&addr),
             )
             .await
@@ -227,7 +229,7 @@ impl SshManager {
                 }
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(timeouts::SSH_READY_POLL).await;
         }
 
         bail!(
@@ -282,7 +284,7 @@ impl SshManager {
         let format_scp_endpoint = |spec: &str| -> String {
             if let Some((inst, guest_path)) = spec.split_once(':') {
                 if inst.len() > 1 && !inst.contains('/') && !inst.contains('\\') {
-                    return format!("{}@127.0.0.1:{}", ssh_user, guest_path);
+                    return format!("{}@{}:{}", ssh_user, LOOPBACK, guest_path);
                 }
             }
             spec.to_string()
@@ -383,7 +385,7 @@ impl SshManager {
                 "LogLevel=ERROR",
                 "-r",
                 &scp_src,
-                &format!("{}@127.0.0.1:{}", ssh_user, guest_target),
+                &format!("{}@{}:{}", ssh_user, LOOPBACK, guest_target),
             ]);
 
             let status = cmd

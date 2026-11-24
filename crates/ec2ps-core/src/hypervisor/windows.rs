@@ -85,7 +85,7 @@ impl VirtualMachineDriver for HypervDriver {
         if let Some(parent) = overlay_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let size_bytes = disk_bytes.max(2 * 1024 * 1024 * 1024);
+        let size_bytes = disk_bytes.max(crate::defaults::MIN_DISK_BYTES_WINDOWS);
         let cmd = format!(
             "New-VHD -Path '{}' -ParentPath '{}' -SizeBytes {} -Differencing -ErrorAction Stop",
             overlay_path.to_string_lossy(),

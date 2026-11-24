@@ -80,7 +80,7 @@ const ANIMALS: &[&str] = &[
 /// Generates a random lowercase `adjective-animal` instance name not already present in `existing`.
 pub fn generate_petname(existing: &[String]) -> String {
     let mut rng = rand::thread_rng();
-    for _ in 0..100 {
+    for _ in 0..crate::defaults::PETNAME_MAX_ATTEMPTS {
         let adj = ADJECTIVES
             .choose(&mut rng)
             .unwrap_or(&"swift")
