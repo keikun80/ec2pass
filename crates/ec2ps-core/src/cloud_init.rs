@@ -18,10 +18,49 @@ pub struct CloudInitConfig<'a> {
     pub user_data_yaml: Option<&'a str>,
 }
 
-/// Validates user-supplied `--cloud-init` YAML syntax before launching the instance.
+/// How cloud-init will interpret a user-data payload, decided by its first line
+/// (mirrors EC2 user-data handling).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserDataKind {
+    /// Starts with `#cloud-config`: YAML mapping, validated before boot.
+    CloudConfig,
+    /// Shell script, MIME multipart, `#include`, boothook, jinja template, part-handler,
+    /// cloud-config-archive: handed to cloud-init unchanged.
+    Passthrough,
+    /// No recognized header: treated as cloud-config YAML for backward compatibility.
+    Headerless,
+}
+
+const PASSTHROUGH_HEADERS: &[&str] = &[
+    "#!",
+    "#include",
+    "#cloud-boothook",
+    "#part-handler",
+    "#cloud-config-archive",
+    "## template:",
+];
+
+/// Classifies user-data by its first non-blank line.
+pub fn classify_user_data(user_data: &str) -> UserDataKind {
+    let head = user_data.trim_start();
+    if PASSTHROUGH_HEADERS.iter().any(|h| head.starts_with(h))
+        || head.to_ascii_lowercase().starts_with("content-type:")
+        || head.to_ascii_lowercase().starts_with("mime-version:")
+    {
+        UserDataKind::Passthrough
+    } else if head.starts_with("#cloud-config") {
+        UserDataKind::CloudConfig
+    } else {
+        UserDataKind::Headerless
+    }
+}
+
+/// Validates user-supplied `--cloud-init` user-data before launching the instance.
+/// Cloud-config (and headerless) payloads must be a YAML mapping; other EC2 user-data
+/// formats (shell scripts, MIME multipart, ...) are passed through without validation.
 pub fn validate_cloud_init_yaml(yaml_str: &str) -> Result<()> {
     let trimmed = yaml_str.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || classify_user_data(trimmed) == UserDataKind::Passthrough {
         return Ok(());
     }
     let val: serde_yaml::Value = serde_yaml::from_str(trimmed)
@@ -71,13 +110,13 @@ runcmd:
     let user_data = match cfg.user_data_yaml {
         Some(custom) if !custom.trim().is_empty() => {
             validate_cloud_init_yaml(custom)?;
-            let mut s = String::new();
-            if !custom.trim_start().starts_with("#cloud-config") {
-                s.push_str("#cloud-config\n");
+            // cloud-init only recognizes the format header on the very first line.
+            let body = custom.trim_start();
+            match classify_user_data(body) {
+                UserDataKind::Passthrough => body.to_string(),
+                UserDataKind::CloudConfig => format!("{}\n", body.trim_end()),
+                UserDataKind::Headerless => format!("#cloud-config\n{}\n", body.trim_end()),
             }
-            s.push_str(custom.trim());
-            s.push('\n');
-            s
         }
         _ => format!(
             r#"#cloud-config
@@ -119,6 +158,70 @@ runcmd:
 
         let invalid = "packages: [unclosed_list";
         assert!(validate_cloud_init_yaml(invalid).is_err());
+    }
+
+    #[test]
+    fn test_classify_user_data() {
+        assert_eq!(
+            classify_user_data("#cloud-config\npackages: [git]"),
+            UserDataKind::CloudConfig
+        );
+        assert_eq!(
+            classify_user_data("\n#!/bin/bash\necho hi"),
+            UserDataKind::Passthrough
+        );
+        assert_eq!(
+            classify_user_data("Content-Type: multipart/mixed; boundary=\"//\""),
+            UserDataKind::Passthrough
+        );
+        assert_eq!(
+            classify_user_data("#include\nhttps://example.com/a"),
+            UserDataKind::Passthrough
+        );
+        assert_eq!(
+            classify_user_data("#cloud-boothook\n#!/bin/sh"),
+            UserDataKind::Passthrough
+        );
+        assert_eq!(
+            classify_user_data("## template: jinja\n#cloud-config"),
+            UserDataKind::Passthrough
+        );
+        assert_eq!(
+            classify_user_data("#cloud-config-archive\n- type: text/x-shellscript"),
+            UserDataKind::Passthrough
+        );
+        assert_eq!(
+            classify_user_data("packages: [git]"),
+            UserDataKind::Headerless
+        );
+    }
+
+    #[test]
+    fn test_shell_and_mime_user_data_accepted() {
+        let script = "#!/bin/bash\ndnf install -y nginx\nsystemctl enable --now nginx\n";
+        assert!(validate_cloud_init_yaml(script).is_ok());
+        let mime = "Content-Type: multipart/mixed; boundary=\"//\"\nMIME-Version: 1.0\n\n--//\n";
+        assert!(validate_cloud_init_yaml(mime).is_ok());
+        // Headerless non-mapping text is still rejected.
+        assert!(validate_cloud_init_yaml("just some text").is_err());
+    }
+
+    #[test]
+    fn test_shell_script_user_data_written_verbatim() {
+        let tmp_iso = std::env::temp_dir().join(format!("seed_sh_{}.iso", rand::random::<u32>()));
+        let script = "\n#!/bin/bash\necho EC2PASS_MARKER > /tmp/marker\n";
+        let cfg = CloudInitConfig {
+            instance_id: "i-test",
+            hostname: "test-host",
+            default_user: crate::defaults::DEFAULT_SSH_USER,
+            ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey",
+            user_data_yaml: Some(script),
+        };
+        generate_al2023_seed_iso(&tmp_iso, &cfg).unwrap();
+        let iso_str = String::from_utf8_lossy(&std::fs::read(&tmp_iso).unwrap()).to_string();
+        assert!(iso_str.contains("#!/bin/bash\necho EC2PASS_MARKER"));
+        assert!(!iso_str.contains("#cloud-config\n#!/bin/bash"));
+        let _ = std::fs::remove_file(&tmp_iso);
     }
 
     #[test]

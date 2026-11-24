@@ -12,6 +12,11 @@ A `user-data` file typically takes one of two forms:
 1. **Shell Script (`#!/bin/bash`)**: Executed once during the final `cloud-final` boot phase.
 2. **Cloud-Config YAML (`#cloud-config`)**: Declarative configuration parsed by cloud-init modules (creating users, packages, write_files, runcmd, etc.).
 
+`ec2pass launch --cloud-init <file>` decides the format from the first line, like EC2 does:
+* `#cloud-config` (or no header at all) is validated as a YAML mapping before boot. A file without a header gets `#cloud-config` added.
+* `#!` scripts, MIME multipart (`Content-Type:`), `#include`, `#cloud-boothook`, `#part-handler`, `#cloud-config-archive` and `## template: jinja` are passed to cloud-init unchanged.
+* Binary (gzip-compressed) user-data is not supported; pass the uncompressed text.
+
 ---
 
 ## 2. Four Testing Strategies

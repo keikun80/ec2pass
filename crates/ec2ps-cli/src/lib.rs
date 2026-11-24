@@ -72,7 +72,8 @@ enum Commands {
         #[arg(short, long, default_value = "5G")]
         disk: String,
 
-        /// Path or URL to a cloud-init cloud-config YAML file (or '-' for stdin)
+        /// Path to EC2-style user-data (or '-' for stdin): #cloud-config YAML, shell script
+        /// (#!), MIME multipart, #include, #cloud-boothook or jinja template
         #[arg(long = "cloud-init")]
         cloud_init: Option<String>,
 
