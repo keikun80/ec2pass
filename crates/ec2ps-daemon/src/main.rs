@@ -138,28 +138,8 @@ async fn main() -> Result<()> {
     );
 
     let auth_token_path = data_dir.join("auth_token");
-    let auth_token = if auth_token_path.exists() {
-        std::fs::read_to_string(&auth_token_path)
-            .unwrap_or_default()
-            .trim()
-            .to_string()
-    } else {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let token = format!("{:016x}{:08x}", now, std::process::id());
-        let _ = std::fs::write(&auth_token_path, &token);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(mut perms) = std::fs::metadata(&auth_token_path).map(|m| m.permissions()) {
-                perms.set_mode(0o600);
-                let _ = std::fs::set_permissions(&auth_token_path, perms);
-            }
-        }
-        token
-    };
+    let auth_token = ec2ps_core::load_or_create_auth_token(&auth_token_path)
+        .context("Failed to initialize daemon auth token")?;
 
     let ctx = Arc::new(DaemonContext {
         data_dir,
