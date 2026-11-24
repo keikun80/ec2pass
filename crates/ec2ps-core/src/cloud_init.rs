@@ -40,9 +40,15 @@ const PASSTHROUGH_HEADERS: &[&str] = &[
     "## template:",
 ];
 
+/// Removes a leading UTF-8 byte-order mark (added by some Windows editors), which would
+/// otherwise hide the format header from cloud-init.
+fn strip_bom(s: &str) -> &str {
+    s.strip_prefix('\u{feff}').unwrap_or(s)
+}
+
 /// Classifies user-data by its first non-blank line.
 pub fn classify_user_data(user_data: &str) -> UserDataKind {
-    let head = user_data.trim_start();
+    let head = strip_bom(user_data).trim_start();
     if PASSTHROUGH_HEADERS.iter().any(|h| head.starts_with(h))
         || head.to_ascii_lowercase().starts_with("content-type:")
         || head.to_ascii_lowercase().starts_with("mime-version:")
@@ -59,7 +65,7 @@ pub fn classify_user_data(user_data: &str) -> UserDataKind {
 /// Cloud-config (and headerless) payloads must be a YAML mapping; other EC2 user-data
 /// formats (shell scripts, MIME multipart, ...) are passed through without validation.
 pub fn validate_cloud_init_yaml(yaml_str: &str) -> Result<()> {
-    let trimmed = yaml_str.trim();
+    let trimmed = strip_bom(yaml_str).trim();
     if trimmed.is_empty() || classify_user_data(trimmed) == UserDataKind::Passthrough {
         return Ok(());
     }
@@ -111,7 +117,7 @@ runcmd:
         Some(custom) if !custom.trim().is_empty() => {
             validate_cloud_init_yaml(custom)?;
             // cloud-init only recognizes the format header on the very first line.
-            let body = custom.trim_start();
+            let body = strip_bom(custom).trim_start();
             match classify_user_data(body) {
                 UserDataKind::Passthrough => body.to_string(),
                 UserDataKind::CloudConfig => format!("{}\n", body.trim_end()),
@@ -202,6 +208,12 @@ runcmd:
         assert!(validate_cloud_init_yaml(script).is_ok());
         let mime = "Content-Type: multipart/mixed; boundary=\"//\"\nMIME-Version: 1.0\n\n--//\n";
         assert!(validate_cloud_init_yaml(mime).is_ok());
+        // A UTF-8 BOM from Windows editors must not hide the header.
+        assert_eq!(
+            classify_user_data("\u{feff}#!/bin/bash\necho hi"),
+            UserDataKind::Passthrough
+        );
+        assert!(validate_cloud_init_yaml("\u{feff}#cloud-config\npackages: [git]").is_ok());
         // Headerless non-mapping text is still rejected.
         assert!(validate_cloud_init_yaml("just some text").is_err());
     }

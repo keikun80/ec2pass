@@ -103,6 +103,32 @@ impl StateStore {
             .with_context(|| format!("Failed to parse state file {:?}", path))
     }
 
+    /// Copies a corrupt state file to `state.json.corrupt-<ts>`, reusing an existing copy with
+    /// identical bytes so service-manager restart loops do not accumulate copies.
+    fn preserve_corrupt_copy(state_file: &Path, ts: u64) -> PathBuf {
+        let bytes = std::fs::read(state_file).unwrap_or_default();
+        let prefix = state_file
+            .with_extension("json.corrupt-")
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if let (Some(dir), false) = (state_file.parent(), prefix.is_empty()) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with(&prefix)
+                        && std::fs::read(entry.path()).ok().as_deref() == Some(bytes.as_slice())
+                    {
+                        return entry.path();
+                    }
+                }
+            }
+        }
+        let copy = state_file.with_extension(format!("json.corrupt-{}", ts));
+        let _ = std::fs::copy(state_file, &copy);
+        copy
+    }
+
     /// Loads `state.json`. If it is corrupt, keeps a `state.json.corrupt-<unix-ts>` copy and
     /// recovers from `state.json.bak`; if no usable backup exists, fails instead of silently
     /// starting from an empty state (which would orphan every instance on disk).
@@ -116,8 +142,7 @@ impl StateStore {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or_default();
-        let corrupt_copy = state_file.with_extension(format!("json.corrupt-{}", ts));
-        let _ = std::fs::copy(state_file, &corrupt_copy);
+        let corrupt_copy = Self::preserve_corrupt_copy(state_file, ts);
 
         let backup = Self::backup_path(state_file);
         if backup.exists() {
@@ -612,6 +637,19 @@ mod tests {
         std::fs::write(tmp_dir.join("state.json"), "not json").unwrap();
 
         assert!(StateStore::load_or_create(&tmp_dir).is_err());
+        // Restart loops (systemd Restart=always / launchd KeepAlive) must not pile up copies.
+        assert!(StateStore::load_or_create(&tmp_dir).is_err());
+        let copies = std::fs::read_dir(&tmp_dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("corrupt-")
+            })
+            .count();
+        assert_eq!(copies, 1);
         // Original file must be left untouched for manual repair.
         assert_eq!(
             std::fs::read_to_string(tmp_dir.join("state.json")).unwrap(),
