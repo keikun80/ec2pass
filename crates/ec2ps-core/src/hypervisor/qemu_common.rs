@@ -10,6 +10,35 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::Command;
 
+/// Directories searched for QEMU binaries (empty string = `PATH` lookup).
+const QEMU_SEARCH_DIRS: &[&str] = &[
+    "",
+    r"C:\Program Files\qemu",
+    r"C:\Program Files (x86)\qemu",
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    "/usr/bin",
+    "/usr/libexec",
+];
+
+/// Well-known aarch64 UEFI firmware locations across macOS, Linux and Windows.
+const AARCH64_UEFI_FIRMWARE_PATHS: &[&str] = &[
+    // Homebrew macOS (Apple Silicon & Intel)
+    "/opt/homebrew/share/qemu/edk2-aarch64-code.fd",
+    "/usr/local/share/qemu/edk2-aarch64-code.fd",
+    // Linux RHEL / Rocky / Fedora
+    "/usr/share/edk2/aarch64/QEMU_EFI.fd",
+    "/usr/share/edk2/aarch64/QEMU_EFI.silent.fd",
+    // Linux Debian / Ubuntu
+    "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd",
+    "/usr/share/qemu-efi/QEMU_EFI.fd",
+    // Linux generic / Arch / openSUSE / Alpine
+    "/usr/share/qemu/edk2-aarch64-code.fd",
+    "/usr/share/qemu/qemu-uefi-aarch64.bin",
+    // Windows
+    r"C:\Program Files\qemu\share\edk2-aarch64-code.fd",
+];
+
 /// Platform-agnostic QEMU Hypervisor Driver.
 pub struct QemuDriver {
     pub qemu_bin: String,
@@ -26,15 +55,7 @@ impl QemuDriver {
             vec!["qemu-system-x86_64", "qemu-kvm"]
         };
 
-        let candidate_dirs = [
-            PathBuf::from(""),
-            PathBuf::from(r"C:\Program Files\qemu"),
-            PathBuf::from(r"C:\Program Files (x86)\qemu"),
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/opt/homebrew/bin"),
-            PathBuf::from("/usr/bin"),
-            PathBuf::from("/usr/libexec"),
-        ];
+        let candidate_dirs: Vec<PathBuf> = QEMU_SEARCH_DIRS.iter().map(PathBuf::from).collect();
 
         let mut found_img = None;
         for dir in &candidate_dirs {
@@ -203,24 +224,8 @@ impl QemuDriver {
         }
 
         // 2. Standard system locations across macOS, Linux, and Windows
-        let candidates = [
-            // Homebrew macOS (Apple Silicon & Intel)
-            "/opt/homebrew/share/qemu/edk2-aarch64-code.fd",
-            "/usr/local/share/qemu/edk2-aarch64-code.fd",
-            // Linux RHEL / Rocky / Fedora
-            "/usr/share/edk2/aarch64/QEMU_EFI.fd",
-            "/usr/share/edk2/aarch64/QEMU_EFI.silent.fd",
-            // Linux Debian / Ubuntu
-            "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd",
-            "/usr/share/qemu-efi/QEMU_EFI.fd",
-            // Linux generic / Arch / openSUSE / Alpine
-            "/usr/share/qemu/edk2-aarch64-code.fd",
-            "/usr/share/qemu/qemu-uefi-aarch64.bin",
-            // Windows
-            r"C:\Program Files\qemu\share\edk2-aarch64-code.fd",
-        ];
 
-        for p in &candidates {
+        for p in AARCH64_UEFI_FIRMWARE_PATHS {
             let path = PathBuf::from(p);
             if path.exists() {
                 return Some(path);
