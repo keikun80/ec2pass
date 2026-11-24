@@ -285,7 +285,14 @@ ec2pass set local.ec2-dev.cpus=4
 ec2pass set local.ec2-dev.memory=8G
 ec2pass set local.ec2-dev.disk=30G
 ec2pass start ec2-dev
+
+# Change the first host port used for new instances (defaults: SSH 10022, QMP 14444).
+# Ports already used by other instances or bound by other processes are skipped automatically.
+ec2pass set local.ssh-port-base=20022
+ec2pass set local.qmp-port-base=24444
 ```
+
+Memory must be at least 256MiB.
 
 ---
 

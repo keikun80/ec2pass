@@ -590,7 +590,7 @@ where
             // 4. Allocate ports, IP, MAC, and build InstanceRecord
             let (ssh_port, qmp_port, guest_ip, mac_addr) = {
                 let mut store = ctx.store.lock().await;
-                let (s, q) = store.allocate_ports();
+                let (s, q) = store.allocate_ports()?;
                 let ip = store.allocate_guest_ip();
                 let mac = store.allocate_mac();
                 (s, q, ip, mac)
@@ -1542,7 +1542,7 @@ where
             let _ = std::fs::remove_file(dst_dir.join("console.log"));
             let _ = std::fs::remove_file(dst_dir.join("qmp.sock"));
 
-            let (ssh_port, qmp_port) = store.allocate_ports();
+            let (ssh_port, qmp_port) = store.allocate_ports()?;
             let guest_ip = store.allocate_guest_ip();
             let mac = store.allocate_mac();
 
