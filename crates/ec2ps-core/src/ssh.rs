@@ -33,6 +33,21 @@ const SSH_KEYGEN_CANDIDATES: &[&str] = &[
     "/usr/local/bin/ssh-keygen",
 ];
 
+/// True when ssh failed before the remote command could start (sshd not up yet), so retrying
+/// cannot run the command twice. Disconnects *during* a command ("closed by remote host",
+/// e.g. a guest reboot) are not retried: re-running a non-idempotent command such as
+/// `cloud-init clean --reboot` or an installer would repeat its side effects.
+fn is_pre_session_ssh_failure(stderr: &str) -> bool {
+    [
+        "Connection refused",
+        "banner exchange",
+        "kex_exchange_identification",
+        "ssh_exchange_identification",
+    ]
+    .iter()
+    .any(|m| stderr.contains(m))
+}
+
 pub struct SshManager {
     _key_dir: PathBuf,
     private_key_path: PathBuf,
@@ -168,11 +183,7 @@ impl SshManager {
 
             if code == 255
                 && attempt < timeouts::SSH_MAX_ATTEMPTS
-                && (last_res.1.contains("banner exchange")
-                    || last_res.1.contains("Connection refused")
-                    || last_res.1.contains("Connection reset")
-                    || last_res.1.contains("kex_exchange_identification")
-                    || last_res.1.contains("closed by remote host"))
+                && is_pre_session_ssh_failure(&last_res.1)
             {
                 tokio::time::sleep(timeouts::SSH_RETRY_DELAY).await;
                 continue;
@@ -525,6 +536,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn test_retry_only_before_session_starts() {
+        assert!(is_pre_session_ssh_failure(
+            "ssh: connect to host 127.0.0.1 port 20022: Connection refused"
+        ));
+        assert!(is_pre_session_ssh_failure(
+            "kex_exchange_identification: read: Connection reset by peer"
+        ));
+        assert!(is_pre_session_ssh_failure(
+            "Connection timed out during banner exchange"
+        ));
+        // A reboot or crash mid-command must not trigger a re-run.
+        assert!(!is_pre_session_ssh_failure(
+            "Connection to 127.0.0.1 closed by remote host."
+        ));
+        assert!(!is_pre_session_ssh_failure(
+            "client_loop: send disconnect: Broken pipe"
+        ));
     }
 
     #[test]

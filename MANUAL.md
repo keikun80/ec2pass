@@ -148,6 +148,7 @@ ec2pass exec <NAME> [-d <DIR>] -- <COMMAND...>
 ```
 * **Options**:
   * `-d, --working-directory <DIR>`: Working directory inside the guest prior to execution.
+* **Exit code and retries**: `exec` exits with the guest command's exit code. While the guest is still booting (sshd refusing connections or not finishing its handshake) it retries the connection up to 6 times. If the connection drops *while the command runs* (for example the command reboots the guest), `exec` exits with `255` and does **not** run the command again.
 * **Examples**:
   ```bash
   # Check Amazon Linux 2023 release version
@@ -359,6 +360,8 @@ Shows logs for debugging boot and user-data scripts.
 
   On Amazon Linux 2023, cloud-init does not echo user-data output to the serial console, so script output is only in `--cloud-init` (and in `launch --watch`, which reads the same log).
 
+  The console log is reset each time QEMU starts (`launch`, `start`, `restart`); reboots from inside the guest append to it, so it can contain several boots. It stays readable after the instance is stopped.
+
 * **Trace output** (`launch --trace`):
   ```text
   + 1795534387.315191 part-001:3: echo 'DBG-STEP1 start'
@@ -386,7 +389,12 @@ Shows logs for debugging boot and user-data scripts.
   | `userdata-trace.log` | Bash trace (only with `--trace`) |
   | `console.log` | Host copy of the serial console |
 
-* **Re-running user-data**: cloud-init runs user-data once per instance. To test a script again, launch a new instance, or run `ec2pass exec <name> -- sudo cloud-init clean --logs --reboot` (wait for it to boot, then check `logs --cloud-init`).
+* **Re-running user-data**: cloud-init runs user-data once per instance. To test a script again, launch a new instance, or reset cloud-init and reboot the same one:
+  ```bash
+  ec2pass exec <name> -- sudo cloud-init clean --logs --reboot   # exits 255: the reboot drops the SSH session
+  ec2pass logs <name> --cloud-init -f                            # follow the re-run once SSH is back (Ctrl-C to stop)
+  ```
+  The `--trace` boothook runs on every boot, so a re-run is traced too; new entries are appended to the same trace log. Run `ec2pass logs <name> --save` afterwards to keep a bundle of the re-run (`launch` only saves one automatically at first boot).
 
 ---
 
