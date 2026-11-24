@@ -13,7 +13,7 @@ use clap::Parser;
 use ec2ps_core::catalog::ImageVault;
 use ec2ps_core::cloud_init::{generate_al2023_seed_iso, validate_cloud_init_yaml, CloudInitConfig};
 use ec2ps_core::default_data_dir;
-use ec2ps_core::defaults::{timeouts, LOOPBACK};
+use ec2ps_core::defaults::{timeouts, DEFAULT_SSH_USER, LOOPBACK};
 use ec2ps_core::driver::VirtualMachineDriver;
 use ec2ps_core::petname::generate_petname;
 use ec2ps_core::ssh::{copy_dir_recursive, SshManager};
@@ -581,7 +581,7 @@ where
                 &CloudInitConfig {
                     instance_id: &format!("i-al2023-{}", instance_name),
                     hostname: &instance_name,
-                    default_user: "ec2-user",
+                    default_user: DEFAULT_SSH_USER,
                     ssh_public_key: &pub_key,
                     user_data_yaml: cloud_init_yaml.as_deref(),
                 },
@@ -625,7 +625,7 @@ where
                 disk_total_bytes: disk_bytes,
                 mounts: mount_map.clone(),
                 ssh_port,
-                ssh_user: "ec2-user".to_string(),
+                ssh_user: DEFAULT_SSH_USER.to_string(),
                 ssh_key_path: ctx.ssh.private_key_path().to_string_lossy().to_string(),
                 snapshots: Vec::new(),
                 created_at: Utc::now(),
@@ -703,7 +703,7 @@ where
                             &instance_name,
                             &instance_dir,
                             ssh_port,
-                            "ec2-user",
+                            &record.details.ssh_user,
                             &["cloud-init status --wait || true".to_string()],
                             None,
                         )
@@ -754,7 +754,7 @@ where
                     .sync_mount(
                         &instance_dir,
                         ssh_port,
-                        "ec2-user",
+                        &record.details.ssh_user,
                         &m.source_path,
                         tgt,
                         Some(&tag),
@@ -1567,7 +1567,7 @@ where
                 &CloudInitConfig {
                     instance_id: &format!("i-al2023-{}", dst_name),
                     hostname: &dst_name,
-                    default_user: "ec2-user",
+                    default_user: &dst_rec.details.ssh_user,
                     ssh_public_key: &pub_key,
                     user_data_yaml: dst_rec.cloud_init_yaml.as_deref(),
                 },

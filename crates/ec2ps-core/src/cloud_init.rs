@@ -127,7 +127,7 @@ runcmd:
         let cfg = CloudInitConfig {
             instance_id: "i-test",
             hostname: "test-host",
-            default_user: "ec2-user",
+            default_user: crate::defaults::DEFAULT_SSH_USER,
             ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey",
             user_data_yaml: None,
         };
