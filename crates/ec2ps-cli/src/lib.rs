@@ -10,13 +10,13 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use ec2ps_core::defaults::timeouts;
 use ec2ps_protocol::{
     format_catalog_find, format_instance_info, format_instance_list, parse_byte_size,
     render_ascii_table, render_progress_bar, OutputFormat, RpcRequest, RpcResponse, RpcStreamFrame,
 };
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
-use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
@@ -64,7 +64,7 @@ enum Commands {
         #[arg(short, long, default_value_t = 1)]
         cpus: u32,
 
-        /// Amount of memory to allocate (Minimum: 128M, Default: 1G)
+        /// Amount of memory to allocate (Minimum: 256M, Default: 1G)
         #[arg(short, long, default_value = "1G")]
         memory: String,
 
@@ -72,7 +72,8 @@ enum Commands {
         #[arg(short, long, default_value = "5G")]
         disk: String,
 
-        /// Path or URL to a cloud-init cloud-config YAML file (or '-' for stdin)
+        /// Path to EC2-style user-data (or '-' for stdin): #cloud-config YAML, shell script
+        /// (#!), MIME multipart, #include, #cloud-boothook or jinja template
         #[arg(long = "cloud-init")]
         cloud_init: Option<String>,
 
@@ -87,6 +88,38 @@ enum Commands {
         /// Maximum time (in seconds) to wait for the command to complete
         #[arg(long, default_value_t = 300)]
         timeout: u64,
+
+        /// Stream the serial console (boot messages and user-data output) while launching
+        #[arg(long)]
+        watch: bool,
+
+        /// Record a timestamped, line-numbered bash trace of user-data scripts
+        /// (view with 'ec2pass logs <name> --trace')
+        #[arg(long)]
+        trace: bool,
+    },
+
+    /// Show instance logs (serial console by default) for debugging user-data
+    Logs {
+        /// Name of the instance
+        name: String,
+
+        /// Keep printing new console output (Ctrl-C to stop)
+        #[arg(short, long)]
+        follow: bool,
+
+        /// Show 'cloud-init status --long' and /var/log/cloud-init-output.log from the guest
+        /// (combine with -f to keep following the output log)
+        #[arg(long = "cloud-init", conflicts_with_all = ["trace", "save"])]
+        cloud_init: bool,
+
+        /// Show the user-data bash trace (instance must be launched with --trace)
+        #[arg(long, conflicts_with_all = ["follow", "save"])]
+        trace: bool,
+
+        /// Save a debug bundle of guest and console logs on the host and print its path
+        #[arg(long, conflicts_with = "follow")]
+        save: bool,
     },
 
     /// Start instances
@@ -559,6 +592,8 @@ async fn run_cli() -> Result<()> {
             networks,
             mounts,
             timeout,
+            watch,
+            trace,
         } => {
             // Hypervisor prerequisite check: fail immediately with actionable guide if missing
             ec2ps_core::hypervisor::check_hypervisor_prerequisites()?;
@@ -607,6 +642,8 @@ async fn run_cli() -> Result<()> {
                     networks,
                     mounts: parsed_mounts,
                     timeout_secs: timeout,
+                    watch,
+                    trace,
                 },
                 true,
             )
@@ -691,6 +728,32 @@ async fn run_cli() -> Result<()> {
                     print!("{}", format_instance_list(&instances, true, format)?);
                 } else {
                     print!("{}", format_instance_info(&instances, format)?);
+                }
+            }
+        }
+
+        Commands::Logs {
+            name,
+            follow,
+            cloud_init,
+            trace,
+            save,
+        } => {
+            let resp = send_rpc(
+                addr,
+                RpcRequest::Logs {
+                    name,
+                    follow,
+                    cloud_init,
+                    trace,
+                    save,
+                },
+                false,
+            )
+            .await?;
+            if let RpcResponse::OkMessage(msg) = resp {
+                if !msg.is_empty() {
+                    println!("{}", msg);
                 }
             }
         }
@@ -810,6 +873,8 @@ async fn run_cli() -> Result<()> {
                             networks: vec![],
                             mounts: vec![],
                             timeout_secs: 300,
+                            watch: false,
+                            trace: false,
                         },
                         true,
                     )
@@ -1208,7 +1273,7 @@ async fn connect_or_spawn_daemon(addr: &str) -> Result<TcpStream> {
                     .spawn();
 
                 for _ in 0..50 {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(timeouts::CLI_POLL).await;
                     if let Ok(stream) = TcpStream::connect(addr).await {
                         return Ok(stream);
                     }
@@ -1248,7 +1313,7 @@ async fn connect_or_spawn_pipe_daemon(
                     .spawn();
 
                 for _ in 0..50 {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(timeouts::CLI_POLL).await;
                     if let Ok(client) = ClientOptions::new().open(pipe_name) {
                         return Ok(client);
                     }
@@ -1392,7 +1457,7 @@ where
     let mut current_status = default_prompt_for_req(&req);
     let mut retrieving_progress: Option<(u8, String)> = None;
 
-    let mut interval = tokio::time::interval(Duration::from_millis(100));
+    let mut interval = tokio::time::interval(timeouts::CLI_POLL);
     let mut lines = BufReader::new(reader).lines();
 
     loop {
@@ -1449,6 +1514,14 @@ where
                                 let _ = io::stderr().flush();
                             }
                         }
+                    }
+                    RpcStreamFrame::Log { line } => {
+                        if last_was_inline {
+                            eprint!("\r\x1b[2K");
+                            let _ = io::stderr().flush();
+                            last_was_inline = false;
+                        }
+                        println!("{}", line);
                     }
                     RpcStreamFrame::Response(resp) => {
                         if last_was_inline {

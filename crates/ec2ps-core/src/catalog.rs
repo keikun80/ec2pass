@@ -21,6 +21,60 @@ pub const AL2023_CDN_BASE: &str = "https://cdn.amazonlinux.com/al2023/os-images/
 pub const AL2023_RELEASE_NOTES_RSS: &str =
     "https://docs.aws.amazon.com/linux/al2023/release-notes/linux-release-notes.rss";
 
+/// Per-architecture string pair (image URL or checksum) for one distro.
+pub struct ArchImageUrls {
+    pub x86_64: &'static str,
+    pub aarch64: &'static str,
+}
+
+impl ArchImageUrls {
+    /// Returns the value for `arch` (`aarch64` or anything else = `x86_64`).
+    pub fn for_arch(&self, arch: &str) -> String {
+        if arch == "aarch64" {
+            self.aarch64.to_string()
+        } else {
+            self.x86_64.to_string()
+        }
+    }
+}
+
+// Latest releases verified on 2026-11-24. Bump these when a distro ships a new release.
+
+pub const UBUNTU_LATEST_IMAGE: ArchImageUrls = ArchImageUrls {
+    x86_64: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img",
+    aarch64: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-arm64.img",
+};
+
+/// Debian `latest/` tracks the newest point release of the stable series.
+pub const DEBIAN_LATEST_IMAGE: ArchImageUrls = ArchImageUrls {
+    x86_64: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
+    aarch64: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-arm64.qcow2",
+};
+
+/// Rocky `*.latest.*` tracks the newest minor release of the major series.
+pub const ROCKY_LATEST_IMAGE: ArchImageUrls = ArchImageUrls {
+    x86_64: "https://download.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
+    aarch64: "https://download.rockylinux.org/pub/rocky/10/images/aarch64/Rocky-10-GenericCloud-Base.latest.aarch64.qcow2",
+};
+
+pub const FEDORA_LATEST_IMAGE: ArchImageUrls = ArchImageUrls {
+    x86_64: "https://download.fedoraproject.org/pub/fedora/linux/releases/45/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-45-1.4.x86_64.qcow2",
+    aarch64: "https://download.fedoraproject.org/pub/fedora/linux/releases/45/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-45-1.4.aarch64.qcow2",
+};
+
+pub const AL2_LATEST_VERSION: &str = "2.0.20261120.0";
+
+pub const AL2_LATEST_IMAGE: ArchImageUrls = ArchImageUrls {
+    x86_64: "https://cdn.amazonlinux.com/os-images/2.0.20261120.0/kvm/amzn2-kvm-2.0.20261120.0-x86_64.xfs.gpt.qcow2",
+    aarch64: "https://cdn.amazonlinux.com/os-images/2.0.20261120.0/kvm-arm64/amzn2-kvm-2.0.20261120.0-arm64.xfs.gpt.qcow2",
+};
+
+/// SHA-256 checksums from the AL2 CDN `SHA256SUMS` files for `AL2_LATEST_IMAGE`.
+pub const AL2_LATEST_SHA256: ArchImageUrls = ArchImageUrls {
+    x86_64: "ab4a95533c38dcd3876e0017341ea4abaefa962458930fe878c34b06e1677f0f",
+    aarch64: "1a7a4d33011b7377b81f9f6388635bad545cc061fb40c4e3fad5e6f22183b8a1",
+};
+
 /// Curated baseline list of known Amazon Linux 2023 release versions on AWS CDN
 pub const KNOWN_AL2023_VERSIONS: &[&str] = &[
     "2023.12.20261120.0",
@@ -118,95 +172,79 @@ impl ImageVault {
             },
             ImageCatalogEntry {
                 os: "Ubuntu".to_string(),
-                release: "Ubuntu 24.04 LTS (Noble)".to_string(),
+                release: "Ubuntu 26.04 LTS (Resolute Raccoon)".to_string(),
                 remote: "ubuntu".to_string(),
-                version: "24.04 LTS".to_string(),
+                version: "26.04 LTS".to_string(),
                 aliases: vec![
                     "ubuntu".to_string(),
-                    "noble".to_string(),
-                    "ubuntu-24.04".to_string(),
-                    "ubuntu-noble".to_string(),
+                    "resolute".to_string(),
+                    "ubuntu-26.04".to_string(),
+                    "ubuntu-resolute".to_string(),
+                    "ubuntu-lts".to_string(),
                 ],
                 arch: arch.to_string(),
-                download_url: if arch == "aarch64" {
-                    "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img".to_string()
-                } else {
-                    "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img".to_string()
-                },
+                download_url: UBUNTU_LATEST_IMAGE.for_arch(arch),
                 sha256: "".to_string(),
-                size_bytes: 650_000_000,
-                description: "Ubuntu 24.04 LTS (Noble Numbat) Official Cloud Image".to_string(),
+                size_bytes: 861_563_904,
+                description: "Ubuntu 26.04 LTS (Resolute Raccoon) Official Cloud Image".to_string(),
             },
             ImageCatalogEntry {
                 os: "Debian".to_string(),
-                release: "Debian 12 (Bookworm)".to_string(),
+                release: "Debian 13 (Trixie)".to_string(),
                 remote: "debian".to_string(),
-                version: "12 (Bookworm)".to_string(),
+                version: "13 (Trixie)".to_string(),
                 aliases: vec![
                     "debian".to_string(),
-                    "bookworm".to_string(),
-                    "debian-12".to_string(),
+                    "trixie".to_string(),
+                    "debian-13".to_string(),
                 ],
                 arch: arch.to_string(),
-                download_url: if arch == "aarch64" {
-                    "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-arm64.qcow2".to_string()
-                } else {
-                    "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2".to_string()
-                },
+                download_url: DEBIAN_LATEST_IMAGE.for_arch(arch),
                 sha256: "".to_string(),
-                size_bytes: 600_000_000,
-                description: "Debian 12 (Bookworm) Official Generic Cloud Image".to_string(),
+                size_bytes: 439_484_416,
+                description: "Debian 13 (Trixie) Official Generic Cloud Image".to_string(),
             },
             ImageCatalogEntry {
                 os: "Rocky Linux".to_string(),
-                release: "Rocky Linux 9".to_string(),
+                release: "Rocky Linux 10".to_string(),
                 remote: "rocky".to_string(),
-                version: "9.4".to_string(),
+                version: "10".to_string(),
                 aliases: vec![
                     "rocky".to_string(),
-                    "rocky-9".to_string(),
+                    "rocky-10".to_string(),
                     "rockylinux".to_string(),
                 ],
                 arch: arch.to_string(),
-                download_url: if arch == "aarch64" {
-                    "https://download.rockylinux.org/pub/rocky/9/images/aarch64/Rocky-9-GenericCloud-Base.latest.aarch64.qcow2".to_string()
-                } else {
-                    "https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2".to_string()
-                },
+                download_url: ROCKY_LATEST_IMAGE.for_arch(arch),
                 sha256: "".to_string(),
-                size_bytes: 900_000_000,
-                description: "Rocky Linux 9 Generic Cloud Base Image".to_string(),
+                size_bytes: 568_000_512,
+                description: "Rocky Linux 10 Generic Cloud Base Image (latest minor)".to_string(),
             },
             ImageCatalogEntry {
                 os: "Fedora".to_string(),
-                release: "Fedora 40 Cloud".to_string(),
+                release: "Fedora 45 Cloud".to_string(),
                 remote: "fedora".to_string(),
-                version: "40".to_string(),
+                version: "45".to_string(),
                 aliases: vec![
                     "fedora".to_string(),
-                    "fedora-40".to_string(),
+                    "fedora-45".to_string(),
                 ],
                 arch: arch.to_string(),
-                download_url: if arch == "aarch64" {
-                    "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/aarch64/images/Fedora-Cloud-Base-Generic.aarch64-40-1.14.qcow2".to_string()
-                } else {
-                    "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2".to_string()
-                },
+                download_url: FEDORA_LATEST_IMAGE.for_arch(arch),
                 sha256: "".to_string(),
-                size_bytes: 550_000_000,
-                description: "Fedora 40 Cloud Base Image".to_string(),
+                size_bytes: 606_732_288,
+                description: "Fedora 45 Cloud Base Image".to_string(),
             },
             ImageCatalogEntry {
                 os: "Amazon Linux".to_string(),
                 release: "Amazon Linux 2 LTS".to_string(),
                 remote: "al2".to_string(),
-                version: "2.0.20250220.0".to_string(),
+                version: AL2_LATEST_VERSION.to_string(),
                 aliases: vec!["al2".to_string(), "amzn2".to_string()],
                 arch: arch.to_string(),
-                download_url: "https://cdn.amazonlinux.com/os-images/2.0.20250220.0/kvm/amzn2-kvm-2.0.20250220.0-x86_64.xfs.gpt.qcow2".to_string(),
-                sha256: "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
-                    .to_string(),
-                size_bytes: 1_377_304_576,
+                download_url: AL2_LATEST_IMAGE.for_arch(arch),
+                sha256: AL2_LATEST_SHA256.for_arch(arch),
+                size_bytes: 1_467_875_328,
                 description: "Amazon Linux 2 LTS KVM Image (Legacy EC2 compatibility)".to_string(),
             },
         ]
@@ -218,7 +256,7 @@ impl ImageVault {
         let mut versions: Vec<String> = Vec::new();
 
         let client = match reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(crate::defaults::timeouts::HTTP_PROBE)
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()
         {
@@ -363,7 +401,7 @@ impl ImageVault {
         };
 
         if let Ok(client) = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(crate::defaults::timeouts::HTTP_PROBE)
             .build()
         {
             if let Ok(resp) = client.get(cdn_url).send().await {
@@ -434,7 +472,7 @@ impl ImageVault {
         };
 
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(8))
+            .timeout(crate::defaults::timeouts::HTTP_RSS)
             .build()
             .unwrap_or_default();
 
@@ -781,11 +819,11 @@ mod tests {
 
         let ubuntu = vault.resolve_image(Some("ubuntu")).await.unwrap();
         assert_eq!(ubuntu.os, "Ubuntu");
-        assert!(ubuntu.release.contains("Ubuntu 24.04"));
+        assert!(ubuntu.release.contains("Ubuntu 26.04"));
 
         let debian = vault.resolve_image(Some("debian")).await.unwrap();
         assert_eq!(debian.os, "Debian");
-        assert!(debian.release.contains("Debian 12"));
+        assert!(debian.release.contains("Debian 13"));
 
         let rocky = vault.resolve_image(Some("rocky")).await.unwrap();
         assert_eq!(rocky.os, "Rocky Linux");

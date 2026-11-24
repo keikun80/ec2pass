@@ -7,12 +7,15 @@
 //! - QEMU / QMP process orchestration
 //! - SSH command execution, file transfer, live host-to-guest directory mounts, snapshots, and clones.
 
+mod debuglog;
+
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::Parser;
 use ec2ps_core::catalog::ImageVault;
 use ec2ps_core::cloud_init::{generate_al2023_seed_iso, validate_cloud_init_yaml, CloudInitConfig};
 use ec2ps_core::default_data_dir;
+use ec2ps_core::defaults::{timeouts, DEFAULT_SSH_USER, LOOPBACK};
 use ec2ps_core::driver::VirtualMachineDriver;
 use ec2ps_core::petname::generate_petname;
 use ec2ps_core::ssh::{copy_dir_recursive, SshManager};
@@ -66,17 +69,26 @@ fn is_process_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 fn is_process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_ACCESS_DENIED, STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
     if pid == 0 {
         return false;
     }
-    let out = std::process::Command::new("cmd")
-        .args(["/c", &format!("tasklist /FI \"PID eq {}\" /NH", pid)])
-        .output();
-    if let Ok(o) = out {
-        let stdout = String::from_utf8_lossy(&o.stdout);
-        stdout.contains(&pid.to_string())
-    } else {
-        false
+    // SAFETY: plain Win32 calls; the handle is closed before returning.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            // The process exists but belongs to another security context.
+            return GetLastError() == ERROR_ACCESS_DENIED;
+        }
+        let mut code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut code) != 0;
+        CloseHandle(handle);
+        ok && code == STILL_ACTIVE as u32
     }
 }
 
@@ -137,28 +149,8 @@ async fn main() -> Result<()> {
     );
 
     let auth_token_path = data_dir.join("auth_token");
-    let auth_token = if auth_token_path.exists() {
-        std::fs::read_to_string(&auth_token_path)
-            .unwrap_or_default()
-            .trim()
-            .to_string()
-    } else {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let token = format!("{:016x}{:08x}", now, std::process::id());
-        let _ = std::fs::write(&auth_token_path, &token);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(mut perms) = std::fs::metadata(&auth_token_path).map(|m| m.permissions()) {
-                perms.set_mode(0o600);
-                let _ = std::fs::set_permissions(&auth_token_path, perms);
-            }
-        }
-        token
-    };
+    let auth_token = ec2ps_core::load_or_create_auth_token(&auth_token_path)
+        .context("Failed to initialize daemon auth token")?;
 
     let ctx = Arc::new(DaemonContext {
         data_dir,
@@ -270,6 +262,19 @@ where
     writer.write_all(line.as_bytes()).await?;
     writer.flush().await?;
     Ok(())
+}
+
+async fn send_log<W>(writer: &mut W, line: &str) -> Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    send_frame(
+        writer,
+        &RpcStreamFrame::Log {
+            line: line.to_string(),
+        },
+    )
+    .await
 }
 
 async fn send_progress<W>(
@@ -477,6 +482,8 @@ where
             networks,
             mounts,
             timeout_secs: req_timeout,
+            watch,
+            trace,
         } => {
             if let Some(ref yaml) = cloud_init_yaml {
                 validate_cloud_init_yaml(yaml)?;
@@ -580,16 +587,17 @@ where
                 &CloudInitConfig {
                     instance_id: &format!("i-al2023-{}", instance_name),
                     hostname: &instance_name,
-                    default_user: "ec2-user",
+                    default_user: DEFAULT_SSH_USER,
                     ssh_public_key: &pub_key,
                     user_data_yaml: cloud_init_yaml.as_deref(),
+                    trace,
                 },
             )?;
 
             // 4. Allocate ports, IP, MAC, and build InstanceRecord
             let (ssh_port, qmp_port, guest_ip, mac_addr) = {
                 let mut store = ctx.store.lock().await;
-                let (s, q) = store.allocate_ports();
+                let (s, q) = store.allocate_ports()?;
                 let ip = store.allocate_guest_ip();
                 let mac = store.allocate_mac();
                 (s, q, ip, mac)
@@ -624,7 +632,7 @@ where
                 disk_total_bytes: disk_bytes,
                 mounts: mount_map.clone(),
                 ssh_port,
-                ssh_user: "ec2-user".to_string(),
+                ssh_user: DEFAULT_SSH_USER.to_string(),
                 ssh_key_path: ctx.ssh.private_key_path().to_string_lossy().to_string(),
                 snapshots: Vec::new(),
                 created_at: Utc::now(),
@@ -641,6 +649,7 @@ where
                 mac_address: mac_addr,
                 cloud_init_yaml,
                 networks,
+                trace,
             };
 
             // 5. Boot VM with QEMU Driver
@@ -668,16 +677,24 @@ where
             let start_wait = std::time::Instant::now();
             let timeout_secs = if req_timeout == 0 { 300 } else { req_timeout };
             let mut is_ready = false;
+            let mut console = debuglog::ConsoleTail::new(instance_dir.join("console.log"));
+            let mut guest_log = debuglog::GuestLogTail::default();
 
             while start_wait.elapsed() < std::time::Duration::from_secs(timeout_secs) {
                 let elapsed = start_wait.elapsed().as_secs();
                 let pct = (85 + (elapsed as f64 / timeout_secs as f64 * 14.0) as u8).min(99);
 
-                // 1. Check if SSH TCP port is open (1.5s timeout)
-                let addr = format!("127.0.0.1:{}", ssh_port);
+                if watch {
+                    for line in console.read_new_lines() {
+                        send_log(writer, &format!("console    | {}", line)).await?;
+                    }
+                }
+
+                // 1. Check if SSH TCP port is open
+                let addr = format!("{}:{}", LOOPBACK, ssh_port);
                 let tcp_ok = matches!(
                     tokio::time::timeout(
-                        std::time::Duration::from_millis(1500),
+                        timeouts::SSH_TCP_PROBE,
                         tokio::net::TcpStream::connect(&addr),
                     )
                     .await,
@@ -696,21 +713,43 @@ where
                     )
                     .await?;
 
+                    if watch {
+                        for line in guest_log
+                            .poll(
+                                &ctx.ssh,
+                                &instance_name,
+                                &instance_dir,
+                                ssh_port,
+                                &record.details.ssh_user,
+                            )
+                            .await
+                        {
+                            send_log(writer, &format!("cloud-init | {}", line)).await?;
+                        }
+                    }
+
                     if let Ok((stdout, _stderr, code)) = ctx
                         .ssh
                         .exec_command(
                             &instance_name,
                             &instance_dir,
                             ssh_port,
-                            "ec2-user",
-                            &["cloud-init status --wait || true".to_string()],
+                            &record.details.ssh_user,
+                            // Non-blocking so the console can be streamed while cloud-init runs.
+                            &["cloud-init status 2>&1 || true".to_string()],
                             None,
                         )
                         .await
                     {
-                        if code == 0 || stdout.contains("done") || stdout.contains("status:") {
-                            is_ready = true;
-                            break;
+                        // A failed user script still yields a booted VM: any final status
+                        // (done/error/degraded) means ready; the outcome is reported afterwards.
+                        if code == 0 || !stdout.is_empty() {
+                            if let Some(status) = debuglog::parse_cloud_init_status(&stdout) {
+                                if debuglog::is_final_status(&status) {
+                                    is_ready = true;
+                                    break;
+                                }
+                            }
                         }
                     }
                 } else {
@@ -726,7 +765,7 @@ where
                     .await?;
                 }
 
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(timeouts::SSH_READY_POLL).await;
             }
 
             if !is_ready {
@@ -743,6 +782,24 @@ where
                 );
             }
 
+            if watch {
+                for line in console.read_new_lines() {
+                    send_log(writer, &format!("console    | {}", line)).await?;
+                }
+                for line in guest_log
+                    .poll(
+                        &ctx.ssh,
+                        &instance_name,
+                        &instance_dir,
+                        ssh_port,
+                        &record.details.ssh_user,
+                    )
+                    .await
+                {
+                    send_log(writer, &format!("cloud-init | {}", line)).await?;
+                }
+            }
+
             record.details.state = InstanceState::Running;
             let launched_details = record.details.clone();
 
@@ -753,7 +810,7 @@ where
                     .sync_mount(
                         &instance_dir,
                         ssh_port,
-                        "ec2-user",
+                        &record.details.ssh_user,
                         &m.source_path,
                         tgt,
                         Some(&tag),
@@ -774,6 +831,29 @@ where
                 Some(100),
             )
             .await?;
+
+            // Report how user-data went and keep a host-side copy of the guest logs.
+            let report_rec = {
+                let store = ctx.store.lock().await;
+                store.data.instances.get(&launched_details.name).cloned()
+            };
+            if let Some(rec) = report_rec {
+                for line in &debuglog::build_launch_report(&ctx.ssh, &rec, !watch).await {
+                    send_log(writer, line).await?;
+                }
+                match debuglog::collect_bundle(&ctx.ssh, &rec, &ctx.data_dir).await {
+                    Ok(dir) => {
+                        send_log(writer, &format!("debug bundle: {}", dir.display())).await?
+                    }
+                    Err(e) => {
+                        send_log(
+                            writer,
+                            &format!("warning: could not save debug bundle: {:#}", e),
+                        )
+                        .await?
+                    }
+                }
+            }
 
             Ok(RpcResponse::Launched(launched_details))
         }
@@ -1101,6 +1181,144 @@ where
             Ok(RpcResponse::InstanceList(list))
         }
 
+        RpcRequest::Logs {
+            name,
+            follow,
+            cloud_init,
+            trace,
+            save,
+        } => {
+            let rec = {
+                let store = ctx.store.lock().await;
+                store
+                    .data
+                    .instances
+                    .get(&name)
+                    .cloned()
+                    .with_context(|| format!("Instance '{}' does not exist", name))?
+            };
+
+            if save || cloud_init || trace {
+                if rec.details.state != InstanceState::Running {
+                    bail!(
+                        "Instance '{}' is not running. --cloud-init, --trace and --save read logs inside the guest; start it first, or omit them to read the console log.",
+                        name
+                    );
+                }
+                if save {
+                    let dir = debuglog::collect_bundle(&ctx.ssh, &rec, &ctx.data_dir).await?;
+                    return Ok(RpcResponse::OkMessage(format!(
+                        "Debug bundle saved to {}",
+                        dir.display()
+                    )));
+                }
+                if cloud_init {
+                    let (status, _, _) = ctx
+                        .ssh
+                        .exec_command(
+                            &rec.details.name,
+                            &rec.instance_dir,
+                            rec.details.ssh_port,
+                            &rec.details.ssh_user,
+                            &["cloud-init status --long 2>&1".to_string()],
+                            None,
+                        )
+                        .await?;
+                    for line in status.lines() {
+                        send_log(writer, line).await?;
+                    }
+                    send_log(writer, "").await?;
+                    let mut guest_log = debuglog::GuestLogTail::default();
+                    loop {
+                        let lines = guest_log
+                            .poll(
+                                &ctx.ssh,
+                                &rec.details.name,
+                                &rec.instance_dir,
+                                rec.details.ssh_port,
+                                &rec.details.ssh_user,
+                            )
+                            .await;
+                        let mut sent = Ok(());
+                        for line in &lines {
+                            sent = send_log(writer, line).await;
+                            if sent.is_err() {
+                                break;
+                            }
+                        }
+                        if !follow {
+                            sent?;
+                            return Ok(RpcResponse::OkMessage(String::new()));
+                        }
+                        if lines.is_empty() {
+                            sent = send_progress(writer, "Following", "", None).await;
+                        }
+                        if sent.is_err() {
+                            return Ok(RpcResponse::OkMessage(String::new()));
+                        }
+                        tokio::time::sleep(timeouts::SSH_READY_POLL).await;
+                    }
+                }
+                let cmd = format!(
+                    "sudo cat {} 2>/dev/null || echo 'No trace log found. Launch the instance with --trace to record one.'",
+                    debuglog::TRACE_LOG_PATH
+                );
+                let (stdout, _stderr, _code) = ctx
+                    .ssh
+                    .exec_command(
+                        &rec.details.name,
+                        &rec.instance_dir,
+                        rec.details.ssh_port,
+                        &rec.details.ssh_user,
+                        &[cmd],
+                        None,
+                    )
+                    .await?;
+                for line in stdout.lines() {
+                    send_log(writer, line).await?;
+                }
+                return Ok(RpcResponse::OkMessage(String::new()));
+            }
+
+            let mut tail = debuglog::ConsoleTail::new(rec.instance_dir.join("console.log"));
+            for line in tail.read_new_lines() {
+                send_log(writer, &line).await?;
+            }
+            if follow {
+                // Runs until the client disconnects; an idle heartbeat detects that.
+                let mut idle_polls = 0u32;
+                loop {
+                    tokio::time::sleep(timeouts::LOG_FOLLOW_POLL).await;
+                    let lines = tail.read_new_lines();
+                    let sent = if lines.is_empty() {
+                        idle_polls += 1;
+                        if idle_polls.is_multiple_of(10) {
+                            send_progress(writer, "Following", "", None).await
+                        } else {
+                            Ok(())
+                        }
+                    } else {
+                        idle_polls = 0;
+                        let mut r = Ok(());
+                        for line in &lines {
+                            r = send_log(writer, line).await;
+                            if r.is_err() {
+                                break;
+                            }
+                        }
+                        r
+                    };
+                    if sent.is_err() {
+                        return Ok(RpcResponse::OkMessage(String::new()));
+                    }
+                }
+            }
+            if let Some(rest) = tail.flush_partial() {
+                send_log(writer, &rest).await?;
+            }
+            Ok(RpcResponse::OkMessage(String::new()))
+        }
+
         RpcRequest::Exec {
             name,
             command,
@@ -1170,7 +1388,7 @@ where
 
             Ok(RpcResponse::ShellConnection {
                 instance: rec.details.clone(),
-                ssh_host: "127.0.0.1".to_string(),
+                ssh_host: LOOPBACK.to_string(),
                 ssh_port: rec.details.ssh_port,
                 ssh_user: rec.details.ssh_user.clone(),
                 ssh_key_path: rec.details.ssh_key_path.clone(),
@@ -1541,7 +1759,7 @@ where
             let _ = std::fs::remove_file(dst_dir.join("console.log"));
             let _ = std::fs::remove_file(dst_dir.join("qmp.sock"));
 
-            let (ssh_port, qmp_port) = store.allocate_ports();
+            let (ssh_port, qmp_port) = store.allocate_ports()?;
             let guest_ip = store.allocate_guest_ip();
             let mac = store.allocate_mac();
 
@@ -1566,9 +1784,10 @@ where
                 &CloudInitConfig {
                     instance_id: &format!("i-al2023-{}", dst_name),
                     hostname: &dst_name,
-                    default_user: "ec2-user",
+                    default_user: &dst_rec.details.ssh_user,
                     ssh_public_key: &pub_key,
                     user_data_yaml: dst_rec.cloud_init_yaml.as_deref(),
+                    trace: dst_rec.trace,
                 },
             )?;
 
@@ -1736,7 +1955,7 @@ async fn collect_instance_metrics(
     ];
 
     if let Ok(Ok((stdout, _stderr, code))) = tokio::time::timeout(
-        std::time::Duration::from_millis(1500),
+        timeouts::GUEST_METRICS_EXEC,
         ssh.exec_command(
             &rec.details.name,
             &rec.instance_dir,

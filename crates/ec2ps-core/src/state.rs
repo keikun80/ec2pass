@@ -24,9 +24,13 @@ pub struct InstanceRecord {
     pub cloud_init_yaml: Option<String>,
     #[serde(default)]
     pub networks: Vec<String>,
+    /// Launched with `--trace`: user-data bash scripts are xtraced in the guest.
+    #[serde(default)]
+    pub trace: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PersistentState {
     pub settings: BTreeMap<String, String>,
     pub instances: BTreeMap<String, InstanceRecord>,
@@ -42,15 +46,33 @@ impl Default for PersistentState {
         settings.insert("local.driver".to_string(), "qemu".to_string());
         settings.insert("local.bridged-network".to_string(), "".to_string());
         settings.insert("local.passphrase".to_string(), "false".to_string());
+        settings.insert(
+            SSH_PORT_BASE_KEY.to_string(),
+            crate::defaults::DEFAULT_SSH_PORT_BASE.to_string(),
+        );
+        settings.insert(
+            QMP_PORT_BASE_KEY.to_string(),
+            crate::defaults::DEFAULT_QMP_PORT_BASE.to_string(),
+        );
 
         Self {
             settings,
             instances: BTreeMap::new(),
             aliases: BTreeMap::new(),
-            next_ssh_port: 10022,
-            next_qmp_port: 14444,
+            next_ssh_port: crate::defaults::DEFAULT_SSH_PORT_BASE,
+            next_qmp_port: crate::defaults::DEFAULT_QMP_PORT_BASE,
         }
     }
+}
+
+/// Setting key for the first host port used for guest SSH forwarding.
+pub const SSH_PORT_BASE_KEY: &str = "local.ssh-port-base";
+/// Setting key for the first host port used for QMP control sockets.
+pub const QMP_PORT_BASE_KEY: &str = "local.qmp-port-base";
+
+/// Returns true if `port` can currently be bound on the host loopback interface.
+fn host_port_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind((crate::defaults::LOOPBACK, port)).is_ok()
 }
 
 pub struct StateStore {
@@ -63,9 +85,7 @@ impl StateStore {
         std::fs::create_dir_all(data_dir)?;
         let state_file = data_dir.join("state.json");
         let data = if state_file.exists() {
-            let content = std::fs::read_to_string(&state_file)
-                .with_context(|| format!("Failed to read state file {:?}", state_file))?;
-            serde_json::from_str(&content).unwrap_or_default()
+            Self::read_state_or_recover(&state_file)?
         } else {
             PersistentState::default()
         };
@@ -75,25 +95,159 @@ impl StateStore {
         Ok(store)
     }
 
+    fn backup_path(state_file: &Path) -> PathBuf {
+        state_file.with_extension("json.bak")
+    }
+
+    fn parse_state_file(path: &Path) -> Result<PersistentState> {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read state file {:?}", path))?;
+        serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse state file {:?}", path))
+    }
+
+    /// Copies a corrupt state file to `state.json.corrupt-<ts>`, reusing an existing copy with
+    /// identical bytes so service-manager restart loops do not accumulate copies.
+    fn preserve_corrupt_copy(state_file: &Path, ts: u64) -> PathBuf {
+        let bytes = std::fs::read(state_file).unwrap_or_default();
+        let prefix = state_file
+            .with_extension("json.corrupt-")
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if let (Some(dir), false) = (state_file.parent(), prefix.is_empty()) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with(&prefix)
+                        && std::fs::read(entry.path()).ok().as_deref() == Some(bytes.as_slice())
+                    {
+                        return entry.path();
+                    }
+                }
+            }
+        }
+        let copy = state_file.with_extension(format!("json.corrupt-{}", ts));
+        let _ = std::fs::copy(state_file, &copy);
+        copy
+    }
+
+    /// Loads `state.json`. If it is corrupt, keeps a `state.json.corrupt-<unix-ts>` copy and
+    /// recovers from `state.json.bak`; if no usable backup exists, fails instead of silently
+    /// starting from an empty state (which would orphan every instance on disk).
+    fn read_state_or_recover(state_file: &Path) -> Result<PersistentState> {
+        let err = match Self::parse_state_file(state_file) {
+            Ok(data) => return Ok(data),
+            Err(e) => e,
+        };
+
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        let corrupt_copy = Self::preserve_corrupt_copy(state_file, ts);
+
+        let backup = Self::backup_path(state_file);
+        if backup.exists() {
+            if let Ok(data) = Self::parse_state_file(&backup) {
+                tracing::warn!(
+                    "{:#}. Recovered from {:?}; corrupt file kept at {:?}",
+                    err,
+                    backup,
+                    corrupt_copy
+                );
+                return Ok(data);
+            }
+        }
+
+        bail!(
+            "{:#}. No usable backup found. A copy was saved to {:?}. Repair {:?}, or delete it to start with an empty state.",
+            err,
+            corrupt_copy,
+            state_file
+        )
+    }
+
+    /// Atomically writes state (tmp file + fsync + rename), keeping the previous version
+    /// as `state.json.bak`.
     pub fn save(&self) -> Result<()> {
+        use std::io::Write;
         let tmp = self.state_file.with_extension("json.tmp");
         let content = serde_json::to_string_pretty(&self.data)?;
-        std::fs::write(&tmp, content)?;
+        {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(content.as_bytes())?;
+            f.sync_all()?;
+        }
+        if self.state_file.exists() && Self::parse_state_file(&self.state_file).is_ok() {
+            let _ = std::fs::copy(&self.state_file, Self::backup_path(&self.state_file));
+        }
         std::fs::rename(&tmp, &self.state_file)?;
         Ok(())
     }
 
-    pub fn allocate_ports(&mut self) -> (u16, u16) {
-        let ssh = self.data.next_ssh_port;
-        let qmp = self.data.next_qmp_port;
-        self.data.next_ssh_port += 1;
-        self.data.next_qmp_port += 1;
-        (ssh, qmp)
+    /// Reads a port-base setting, falling back to `default` when unset or invalid.
+    fn port_base(&self, key: &str, default: u16) -> u16 {
+        self.data
+            .settings
+            .get(key)
+            .and_then(|v| v.parse::<u16>().ok())
+            .filter(|p| *p != 0)
+            .unwrap_or(default)
+    }
+
+    /// Host ports already assigned to existing instances (SSH forwards and QMP sockets).
+    fn reserved_ports(&self) -> std::collections::HashSet<u16> {
+        self.data
+            .instances
+            .values()
+            .flat_map(|r| [r.details.ssh_port, r.qmp_port])
+            .collect()
+    }
+
+    /// Finds the next port at or after `start` (wrapping back to `base`) that is not reserved
+    /// and is currently bindable on loopback.
+    fn find_free_port(
+        start: u16,
+        base: u16,
+        reserved: &std::collections::HashSet<u16>,
+        is_free: &impl Fn(u16) -> bool,
+    ) -> Option<u16> {
+        let mut port = start.max(base);
+        for _ in 0..crate::defaults::PORT_ALLOC_MAX_PROBES {
+            if !reserved.contains(&port) && is_free(port) {
+                return Some(port);
+            }
+            port = port.checked_add(1).unwrap_or(base);
+        }
+        None
+    }
+
+    /// Allocates an (SSH, QMP) host port pair, skipping ports used by other instances or
+    /// already bound by other processes.
+    pub fn allocate_ports(&mut self) -> Result<(u16, u16)> {
+        self.allocate_ports_with(&host_port_is_free)
+    }
+
+    fn allocate_ports_with(&mut self, is_free: &impl Fn(u16) -> bool) -> Result<(u16, u16)> {
+        let ssh_base = self.port_base(SSH_PORT_BASE_KEY, crate::defaults::DEFAULT_SSH_PORT_BASE);
+        let qmp_base = self.port_base(QMP_PORT_BASE_KEY, crate::defaults::DEFAULT_QMP_PORT_BASE);
+        let mut reserved = self.reserved_ports();
+
+        let ssh = Self::find_free_port(self.data.next_ssh_port, ssh_base, &reserved, is_free)
+            .with_context(|| format!("No free SSH host port found starting at {}", ssh_base))?;
+        reserved.insert(ssh);
+        let qmp = Self::find_free_port(self.data.next_qmp_port, qmp_base, &reserved, is_free)
+            .with_context(|| format!("No free QMP host port found starting at {}", qmp_base))?;
+
+        self.data.next_ssh_port = ssh.checked_add(1).unwrap_or(ssh_base);
+        self.data.next_qmp_port = qmp.checked_add(1).unwrap_or(qmp_base);
+        Ok((ssh, qmp))
     }
 
     /// Returns the guest IPv4 for QEMU user-mode SLIRP networking
     pub fn allocate_guest_ip(&self) -> String {
-        "10.0.2.15".to_string()
+        crate::defaults::SLIRP_GUEST_IP.to_string()
     }
 
     /// Generates a deterministic KVM/QEMU locally administered MAC address (`52:54:00:xx:xx:xx`)
@@ -148,8 +302,11 @@ impl StateStore {
                     }
                     "memory" => {
                         let bytes = parse_byte_size(value)?;
-                        if bytes < 128 * 1024 * 1024 {
-                            bail!("Memory size must be at least 128MiB");
+                        if bytes < crate::defaults::MIN_MEMORY_BYTES {
+                            bail!(
+                                "Memory size must be at least {}",
+                                format_bytes(crate::defaults::MIN_MEMORY_BYTES)
+                            );
                         }
                         rec.details.memory_total_bytes = bytes;
                     }
@@ -196,6 +353,20 @@ impl StateStore {
             self.data
                 .settings
                 .insert("local._passphrase_secret".to_string(), value.to_string());
+            self.save()?;
+            return Ok(());
+        }
+
+        if key == SSH_PORT_BASE_KEY || key == QMP_PORT_BASE_KEY {
+            let port: u16 = value.parse().ok().filter(|p| *p >= 1024).with_context(|| {
+                format!("'{}' must be a port number between 1024 and 65535", key)
+            })?;
+            if key == SSH_PORT_BASE_KEY {
+                self.data.next_ssh_port = port;
+            } else {
+                self.data.next_qmp_port = port;
+            }
+            self.data.settings.insert(key.to_string(), port.to_string());
             self.save()?;
             return Ok(());
         }
@@ -376,8 +547,10 @@ mod tests {
             std::env::temp_dir().join(format!("ec2ps_test_state_{}", rand::random::<u32>()));
         let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
 
-        let (ssh1, qmp1) = store.allocate_ports();
-        let (ssh2, qmp2) = store.allocate_ports();
+        // Treat every port as free so the test does not depend on host port usage.
+        let all_free = |_: u16| true;
+        let (ssh1, qmp1) = store.allocate_ports_with(&all_free).unwrap();
+        let (ssh2, qmp2) = store.allocate_ports_with(&all_free).unwrap();
         assert_eq!(ssh2, ssh1 + 1);
         assert_eq!(qmp2, qmp1 + 1);
 
@@ -427,7 +600,133 @@ mod tests {
             mac_address: "52:54:00:12:34:56".to_string(),
             cloud_init_yaml: None,
             networks: Vec::new(),
+            trace: false,
         }
+    }
+
+    #[test]
+    fn test_corrupt_state_recovers_from_backup() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_corrupt_{}", rand::random::<u32>()));
+        {
+            let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
+            let rec = dummy_instance_record("keep-me", &tmp_dir, InstanceState::Stopped, 1);
+            store.data.instances.insert("keep-me".to_string(), rec);
+            store.save().unwrap();
+            store.save().unwrap(); // .bak now holds the instance too
+        }
+        std::fs::write(tmp_dir.join("state.json"), "{ truncated").unwrap();
+
+        let store = StateStore::load_or_create(&tmp_dir).unwrap();
+        assert!(store.data.instances.contains_key("keep-me"));
+        let corrupt_copies = std::fs::read_dir(&tmp_dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("corrupt-")
+            })
+            .count();
+        assert_eq!(corrupt_copies, 1);
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_corrupt_state_without_backup_errors_instead_of_reset() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_corrupt_nb_{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        std::fs::write(tmp_dir.join("state.json"), "not json").unwrap();
+
+        assert!(StateStore::load_or_create(&tmp_dir).is_err());
+        // Restart loops (systemd Restart=always / launchd KeepAlive) must not pile up copies.
+        assert!(StateStore::load_or_create(&tmp_dir).is_err());
+        let copies = std::fs::read_dir(&tmp_dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("corrupt-")
+            })
+            .count();
+        assert_eq!(copies, 1);
+        // Original file must be left untouched for manual repair.
+        assert_eq!(
+            std::fs::read_to_string(tmp_dir.join("state.json")).unwrap(),
+            "not json"
+        );
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_state_missing_fields_use_defaults() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_partial_{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        std::fs::write(tmp_dir.join("state.json"), r#"{"instances":{}}"#).unwrap();
+        let store = StateStore::load_or_create(&tmp_dir).unwrap();
+        assert_eq!(
+            store.data.next_ssh_port,
+            crate::defaults::DEFAULT_SSH_PORT_BASE
+        );
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_allocate_ports_skips_reserved_and_busy_ports() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_ports_{}", rand::random::<u32>()));
+        let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
+
+        // Existing instance holds 10022 / 14444; another process holds 10023.
+        let rec = dummy_instance_record("vm-a", &tmp_dir, InstanceState::Stopped, 1);
+        store.data.instances.insert("vm-a".to_string(), rec);
+        let busy = |p: u16| p != 10023;
+
+        let (ssh, qmp) = store.allocate_ports_with(&busy).unwrap();
+        assert_eq!(ssh, 10024);
+        assert_eq!(qmp, 14445);
+        assert_eq!(store.data.next_ssh_port, 10025);
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_allocate_ports_fails_when_exhausted() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_ports_x_{}", rand::random::<u32>()));
+        let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
+        assert!(store.allocate_ports_with(&|_| false).is_err());
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_port_base_setting() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("ec2ps_test_portbase_{}", rand::random::<u32>()));
+        let mut store = StateStore::load_or_create(&tmp_dir).unwrap();
+
+        assert_eq!(
+            store
+                .get_all_settings()
+                .get(SSH_PORT_BASE_KEY)
+                .map(String::as_str),
+            Some("10022")
+        );
+        store.set_setting(SSH_PORT_BASE_KEY, "20022").unwrap();
+        store.set_setting(QMP_PORT_BASE_KEY, "24444").unwrap();
+        let (ssh, qmp) = store.allocate_ports_with(&|_| true).unwrap();
+        assert_eq!((ssh, qmp), (20022, 24444));
+
+        assert!(store.set_setting(SSH_PORT_BASE_KEY, "80").is_err());
+        assert!(store.set_setting(SSH_PORT_BASE_KEY, "abc").is_err());
+        assert!(store.set_setting(QMP_PORT_BASE_KEY, "70000").is_err());
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]

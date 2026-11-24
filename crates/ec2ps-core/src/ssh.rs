@@ -8,6 +8,46 @@ use ring::signature::KeyPair;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
+use crate::defaults::{timeouts, LOOPBACK};
+
+/// File name of the daemon's SSH private key (the public key adds `.pub`).
+pub const KEY_NAME: &str = "id_ed25519_ec2pass";
+
+/// Key names written by earlier releases, reused if present so existing VMs stay reachable.
+pub const LEGACY_KEY_NAMES: &[&str] = &["id_ed25519_mp", "id_ed25519_alpass"];
+
+/// Comment embedded in generated public keys.
+pub const KEY_COMMENT: &str = "ec2pass@al2023-daemon";
+
+/// `ssh-keygen` locations tried in order (bare name = `PATH` lookup).
+#[cfg(windows)]
+const SSH_KEYGEN_CANDIDATES: &[&str] = &[
+    "ssh-keygen",
+    r"C:\Windows\System32\OpenSSH\ssh-keygen.exe",
+    r"C:\Program Files\Git\usr\bin\ssh-keygen.exe",
+];
+#[cfg(not(windows))]
+const SSH_KEYGEN_CANDIDATES: &[&str] = &[
+    "ssh-keygen",
+    "/usr/bin/ssh-keygen",
+    "/usr/local/bin/ssh-keygen",
+];
+
+/// True when ssh failed before the remote command could start (sshd not up yet), so retrying
+/// cannot run the command twice. Disconnects *during* a command ("closed by remote host",
+/// e.g. a guest reboot) are not retried: re-running a non-idempotent command such as
+/// `cloud-init clean --reboot` or an installer would repeat its side effects.
+fn is_pre_session_ssh_failure(stderr: &str) -> bool {
+    [
+        "Connection refused",
+        "banner exchange",
+        "kex_exchange_identification",
+        "ssh_exchange_identification",
+    ]
+    .iter()
+    .any(|m| stderr.contains(m))
+}
+
 pub struct SshManager {
     _key_dir: PathBuf,
     private_key_path: PathBuf,
@@ -17,15 +57,17 @@ pub struct SshManager {
 impl SshManager {
     pub fn new(key_dir: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(&key_dir)?;
-        let mut private_key_path = key_dir.join("id_ed25519_ec2pass");
-        let mut public_key_path = key_dir.join("id_ed25519_ec2pass.pub");
-        if !private_key_path.exists() && key_dir.join("id_ed25519_mp").exists() {
-            private_key_path = key_dir.join("id_ed25519_mp");
-            public_key_path = key_dir.join("id_ed25519_mp.pub");
-        } else if !private_key_path.exists() && key_dir.join("id_ed25519_alpass").exists() {
-            private_key_path = key_dir.join("id_ed25519_alpass");
-            public_key_path = key_dir.join("id_ed25519_alpass.pub");
-        }
+        let key_name = if key_dir.join(KEY_NAME).exists() {
+            KEY_NAME
+        } else {
+            LEGACY_KEY_NAMES
+                .iter()
+                .copied()
+                .find(|name| key_dir.join(name).exists())
+                .unwrap_or(KEY_NAME)
+        };
+        let private_key_path = key_dir.join(key_name);
+        let public_key_path = key_dir.join(format!("{}.pub", key_name));
 
         let mgr = Self {
             _key_dir: key_dir,
@@ -54,29 +96,9 @@ impl SshManager {
         }
 
         // Try system ssh-keygen first across standard locations
-        let candidates = [
-            PathBuf::from("ssh-keygen"),
-            #[cfg(windows)]
-            PathBuf::from(r"C:\Windows\System32\OpenSSH\ssh-keygen.exe"),
-            #[cfg(windows)]
-            PathBuf::from(r"C:\Program Files\Git\usr\bin\ssh-keygen.exe"),
-            #[cfg(unix)]
-            PathBuf::from("/usr/bin/ssh-keygen"),
-            #[cfg(unix)]
-            PathBuf::from("/usr/local/bin/ssh-keygen"),
-        ];
-
-        for candidate in candidates {
-            let status = std::process::Command::new(&candidate)
-                .args([
-                    "-t",
-                    "ed25519",
-                    "-N",
-                    "",
-                    "-C",
-                    "ec2pass@al2023-daemon",
-                    "-f",
-                ])
+        for candidate in SSH_KEYGEN_CANDIDATES {
+            let status = std::process::Command::new(candidate)
+                .args(["-t", "ed25519", "-N", "", "-C", KEY_COMMENT, "-f"])
                 .arg(&self.private_key_path)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -132,7 +154,7 @@ impl SshManager {
         };
 
         let mut last_res = (String::new(), String::new(), 1);
-        for attempt in 1..=6 {
+        for attempt in 1..=timeouts::SSH_MAX_ATTEMPTS {
             let output = Command::new("ssh")
                 .args([
                     "-i",
@@ -147,7 +169,7 @@ impl SshManager {
                     "LogLevel=ERROR",
                     "-o",
                     "ConnectTimeout=10",
-                    &format!("{}@127.0.0.1", ssh_user),
+                    &format!("{}@{}", ssh_user, LOOPBACK),
                     &remote_cmd,
                 ])
                 .output()
@@ -160,14 +182,10 @@ impl SshManager {
             last_res = (stdout, stderr, code);
 
             if code == 255
-                && attempt < 6
-                && (last_res.1.contains("banner exchange")
-                    || last_res.1.contains("Connection refused")
-                    || last_res.1.contains("Connection reset")
-                    || last_res.1.contains("kex_exchange_identification")
-                    || last_res.1.contains("closed by remote host"))
+                && attempt < timeouts::SSH_MAX_ATTEMPTS
+                && is_pre_session_ssh_failure(&last_res.1)
             {
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                tokio::time::sleep(timeouts::SSH_RETRY_DELAY).await;
                 continue;
             }
             break;
@@ -193,10 +211,10 @@ impl SshManager {
             attempts += 1;
             let elapsed = start.elapsed().as_secs();
 
-            // 1. Check if SSH TCP port is open (1.5s timeout)
-            let addr = format!("127.0.0.1:{}", ssh_port);
+            // 1. Check if SSH TCP port is open
+            let addr = format!("{}:{}", LOOPBACK, ssh_port);
             if let Ok(Ok(_)) = tokio::time::timeout(
-                std::time::Duration::from_millis(1500),
+                timeouts::SSH_TCP_PROBE,
                 tokio::net::TcpStream::connect(&addr),
             )
             .await
@@ -227,7 +245,7 @@ impl SshManager {
                 }
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(timeouts::SSH_READY_POLL).await;
         }
 
         bail!(
@@ -282,7 +300,7 @@ impl SshManager {
         let format_scp_endpoint = |spec: &str| -> String {
             if let Some((inst, guest_path)) = spec.split_once(':') {
                 if inst.len() > 1 && !inst.contains('/') && !inst.contains('\\') {
-                    return format!("{}@127.0.0.1:{}", ssh_user, guest_path);
+                    return format!("{}@{}:{}", ssh_user, LOOPBACK, guest_path);
                 }
             }
             spec.to_string()
@@ -383,7 +401,7 @@ impl SshManager {
                 "LogLevel=ERROR",
                 "-r",
                 &scp_src,
-                &format!("{}@127.0.0.1:{}", ssh_user, guest_target),
+                &format!("{}@{}:{}", ssh_user, LOOPBACK, guest_target),
             ]);
 
             let status = cmd
@@ -483,7 +501,7 @@ pub fn generate_dynamic_ed25519_keypair() -> Result<(String, String)> {
     priv_and_pub.extend_from_slice(pubkey_bytes);
     put_bytes(&mut priv_payload, &priv_and_pub);
 
-    put_string(&mut priv_payload, "ec2pass@al2023-daemon");
+    put_string(&mut priv_payload, KEY_COMMENT);
 
     // Padding (multiple of 8 bytes for "none" cipher)
     let block_size = 8;
@@ -511,6 +529,59 @@ pub fn generate_dynamic_ed25519_keypair() -> Result<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch_key_dir(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("ec2pass-sshtest-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_retry_only_before_session_starts() {
+        assert!(is_pre_session_ssh_failure(
+            "ssh: connect to host 127.0.0.1 port 20022: Connection refused"
+        ));
+        assert!(is_pre_session_ssh_failure(
+            "kex_exchange_identification: read: Connection reset by peer"
+        ));
+        assert!(is_pre_session_ssh_failure(
+            "Connection timed out during banner exchange"
+        ));
+        // A reboot or crash mid-command must not trigger a re-run.
+        assert!(!is_pre_session_ssh_failure(
+            "Connection to 127.0.0.1 closed by remote host."
+        ));
+        assert!(!is_pre_session_ssh_failure(
+            "client_loop: send disconnect: Broken pipe"
+        ));
+    }
+
+    #[test]
+    fn test_prefers_legacy_key_when_primary_missing() {
+        let dir = scratch_key_dir("legacy");
+        std::fs::write(dir.join("id_ed25519_alpass"), "priv").unwrap();
+        std::fs::write(dir.join("id_ed25519_alpass.pub"), "ssh-ed25519 AAAA legacy").unwrap();
+
+        let mgr = SshManager::new(dir.clone()).unwrap();
+        assert_eq!(mgr.private_key_path(), dir.join("id_ed25519_alpass"));
+        assert_eq!(mgr.public_key_string().unwrap(), "ssh-ed25519 AAAA legacy");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_primary_key_wins_over_legacy() {
+        let dir = scratch_key_dir("primary");
+        for name in [KEY_NAME, "id_ed25519_mp"] {
+            std::fs::write(dir.join(name), "priv").unwrap();
+            std::fs::write(dir.join(format!("{}.pub", name)), name).unwrap();
+        }
+
+        let mgr = SshManager::new(dir.clone()).unwrap();
+        assert_eq!(mgr.private_key_path(), dir.join(KEY_NAME));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn test_generate_dynamic_ed25519_keypair() {
