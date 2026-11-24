@@ -41,7 +41,7 @@ ec2pass find [SEARCH_STRING] [--show-versions] [--format <FORMAT>]
   # Output:
   # Image    Aliases                            Version
   # al2023   2023,default,latest,lts,amzn2023   2023.12.20261120.0 (Kernel 6.1)
-  # al2      amzn2                              2.0.20250220.0
+  # al2      amzn2                              2.0.20261120.0
 
   # Search specific image with JSON output
   ec2pass find al2023 --format json
