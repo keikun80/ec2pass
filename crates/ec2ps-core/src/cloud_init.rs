@@ -115,6 +115,10 @@ fn ensure_ec2pass_user_in_users(body: &str, cfg: &CloudInitConfig<'_>) -> Result
         return Ok(None);
     };
 
+    // An empty `users:` (null) would still replace vendor-data's list, so treat it as [].
+    if users.is_null() {
+        *users = Value::Sequence(Vec::new());
+    }
     // cloud-init also accepts a comma-separated string: "default, alice".
     if let Value::String(s) = users {
         *users = Value::Sequence(
@@ -126,7 +130,11 @@ fn ensure_ec2pass_user_in_users(body: &str, cfg: &CloudInitConfig<'_>) -> Result
         );
     }
     let Value::Sequence(list) = users else {
-        // Legacy/unknown shapes are left to cloud-init untouched.
+        // Legacy/unknown shapes (e.g. a dict) are left to cloud-init untouched.
+        tracing::warn!(
+            "user-data 'users:' is not a list; ec2pass login user '{}' may be missing in the VM",
+            cfg.default_user
+        );
         return Ok(None);
     };
 
@@ -391,6 +399,16 @@ runcmd:
         assert_eq!(users[0], "default");
         assert_eq!(users[1]["name"], "ec2-user");
         assert_eq!(users[2], "bob");
+    }
+
+    #[test]
+    fn test_empty_users_key_still_gets_ec2pass_user() {
+        let out = ensure_ec2pass_user_in_users("#cloud-config\nusers:\n", &merge_cfg())
+            .unwrap()
+            .unwrap();
+        let users = users_of(&out);
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0]["name"], "ec2-user");
     }
 
     #[test]
