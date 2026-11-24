@@ -40,6 +40,15 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! cargo test --workspace --no-fail-fast 2>&1 | tee test.log; then
+            # Surface failing tests as an annotation (visible without opening the log).
+            msg=$(grep -E "^(---- |thread '.*' panicked| +left| +right|test .* FAILED|error)" test.log \
+              | head -80 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+            echo "::error title=cargo test failed on ${{ matrix.os }}::${msg}"
+            exit 1
+          fi
       - name: Build binaries
         run: cargo build --workspace
