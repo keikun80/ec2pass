@@ -69,17 +69,26 @@ fn is_process_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 fn is_process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_ACCESS_DENIED, STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
     if pid == 0 {
         return false;
     }
-    let out = std::process::Command::new("cmd")
-        .args(["/c", &format!("tasklist /FI \"PID eq {}\" /NH", pid)])
-        .output();
-    if let Ok(o) = out {
-        let stdout = String::from_utf8_lossy(&o.stdout);
-        stdout.contains(&pid.to_string())
-    } else {
-        false
+    // SAFETY: plain Win32 calls; the handle is closed before returning.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            // The process exists but belongs to another security context.
+            return GetLastError() == ERROR_ACCESS_DENIED;
+        }
+        let mut code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut code) != 0;
+        CloseHandle(handle);
+        ok && code == STILL_ACTIVE as u32
     }
 }
 
