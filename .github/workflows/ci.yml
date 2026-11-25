@@ -52,3 +52,41 @@ jobs:
           fi
       - name: Build binaries
         run: cargo build --workspace
+
+  e2e-linux-kvm:
+    name: E2E (Linux, KVM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          # Fail here rather than silently testing the slow TCG path.
+          test -r /dev/kvm -a -w /dev/kvm
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+          qemu-system-x86_64 --version
+      - name: Build
+        run: cargo build --workspace
+      - name: E2E suite
+        shell: bash
+        env:
+          EC2PASS_BIN: target/debug/ec2pass
+          EC2PASSD_BIN: target/debug/ec2passd
+        run: |
+          set -o pipefail
+          if ! bash tests/e2e_test.sh 2>&1 | tee e2e.log; then
+            msg=$( { tail -n 40 e2e.log; echo '--- daemon log'; tail -n 40 /tmp/ec2passd_e2e.log 2>/dev/null; } \
+              | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+            echo "::error title=E2E failed on Linux (KVM)::${msg}"
+            exit 1
+          fi
