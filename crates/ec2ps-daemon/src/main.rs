@@ -114,6 +114,10 @@ async fn main() -> Result<()> {
         data_dir = PathBuf::from(".ec2ps-data");
         std::fs::create_dir_all(&data_dir)?;
     }
+    // Store absolute paths: qemu-img resolves a relative backing file against the overlay's
+    // directory, so a relative --data-dir (e.g. `.\data`) breaks every launch.
+    let data_dir = std::path::absolute(&data_dir)
+        .with_context(|| format!("Failed to resolve data dir {:?}", data_dir))?;
 
     let mut store = StateStore::load_or_create(&data_dir)?;
     for rec in store.data.instances.values_mut() {

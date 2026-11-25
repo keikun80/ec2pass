@@ -402,15 +402,18 @@ impl super::VirtualMachineDriver for QemuDriver {
             cmd.arg(format!("{}G", size_gib));
         }
 
-        let status = cmd
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
+        let output = cmd
+            .stdin(std::process::Stdio::null())
+            .output()
             .await
             .context("Failed to execute qemu-img create")?;
 
-        if !status.success() {
-            bail!("qemu-img failed to create overlay disk {:?}", overlay_path);
+        if !output.status.success() {
+            bail!(
+                "qemu-img failed to create overlay disk {:?}: {}",
+                overlay_path,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
         }
         Ok(())
     }

@@ -54,6 +54,7 @@ try {
     $testVm = "e2e-win-$(Get-Random)"
     Write-Host -NoNewline "[4/8] Launching test instance '$testVm'... "
     & $bin launch al2023 -n $testVm --cpus 1 --memory 1G --disk 25G --timeout $launchTimeout | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "launch failed (exit $LASTEXITCODE)" }
     Write-Host "PASSED" -ForegroundColor Green
 
     # Test 5: Verify list and info
