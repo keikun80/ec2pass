@@ -39,6 +39,50 @@ const AARCH64_UEFI_FIRMWARE_PATHS: &[&str] = &[
     r"C:\Program Files\qemu\share\edk2-aarch64-code.fd",
 ];
 
+/// Whether the Windows Hypervisor Platform (WHPX) is usable, asked the same way QEMU asks.
+/// WinHvPlatform.dll is loaded dynamically because it only exists when the optional
+/// "Windows Hypervisor Platform" feature is installed.
+#[cfg(windows)]
+fn whpx_available() -> bool {
+    use std::sync::OnceLock;
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+        // HRESULT WHvGetCapability(WHV_CAPABILITY_CODE, VOID*, UINT32, UINT32*)
+        type WhvGetCapability =
+            unsafe extern "system" fn(i32, *mut std::ffi::c_void, u32, *mut u32) -> i32;
+        const WHV_CAPABILITY_CODE_HYPERVISOR_PRESENT: i32 = 0;
+        let dll: Vec<u16> = "WinHvPlatform.dll\0".encode_utf16().collect();
+        // SAFETY: the function pointer comes from the documented WHvGetCapability export and
+        // is called with a 4-byte BOOL buffer, as the API requires for this capability code.
+        unsafe {
+            let module = LoadLibraryW(dll.as_ptr());
+            if module.is_null() {
+                return false;
+            }
+            let Some(proc_addr) = GetProcAddress(module, c"WHvGetCapability".as_ptr().cast())
+            else {
+                return false;
+            };
+            let get_capability: WhvGetCapability = std::mem::transmute(proc_addr);
+            let mut present: i32 = 0;
+            let mut written: u32 = 0;
+            let hr = get_capability(
+                WHV_CAPABILITY_CODE_HYPERVISOR_PRESENT,
+                (&mut present as *mut i32).cast(),
+                std::mem::size_of::<i32>() as u32,
+                &mut written,
+            );
+            hr >= 0 && present != 0
+        }
+    })
+}
+
+#[cfg(not(windows))]
+fn whpx_available() -> bool {
+    false
+}
+
 /// File in the instance directory that receives QEMU's stderr.
 pub const QEMU_LOG_NAME: &str = "qemu.log";
 
@@ -356,12 +400,23 @@ impl QemuDriver {
                 "host".to_string(),
             ]);
         } else if cfg!(target_os = "windows") {
-            args.extend([
-                "-accel".to_string(),
-                "whpx,kernel-irqchip=off".to_string(),
-                "-accel".to_string(),
-                "tcg".to_string(),
-            ]);
+            if whpx_available() {
+                args.extend([
+                    "-accel".to_string(),
+                    "whpx,kernel-irqchip=off".to_string(),
+                    "-accel".to_string(),
+                    "tcg".to_string(),
+                ]);
+            } else {
+                // Without WHPX, QEMU's default qemu64 CPU lacks x86-64-v2, so modern distros
+                // (AL2023, RHEL 9 family) panic in init. Emulate every feature TCG supports.
+                args.extend([
+                    "-accel".to_string(),
+                    "tcg".to_string(),
+                    "-cpu".to_string(),
+                    "max".to_string(),
+                ]);
+            }
         }
 
         args
