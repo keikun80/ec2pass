@@ -47,9 +47,13 @@ echo -e "\n${YELLOW}[Step 3/6] Running Rust unit & component tests...${NC}"
 cargo test --workspace
 
 echo -e "\n${YELLOW}[Step 4/6] Staging binaries to /usr/local/bin...${NC}"
-sudo cp "$CARGO_TARGET_DIR/release/ec2pass" "/usr/local/bin/ec2pass"
-sudo cp "$CARGO_TARGET_DIR/release/ec2passd" "/usr/local/bin/ec2passd"
-sudo chmod 755 /usr/local/bin/ec2pass /usr/local/bin/ec2passd
+# Stop a daemon left over from an earlier run so the E2E suite uses the new build, and
+# replace binaries by rename so a still-running copy cannot cause "Text file busy".
+pkill -x ec2passd 2>/dev/null || true
+for b in ec2pass ec2passd; do
+    sudo install -m 755 "$CARGO_TARGET_DIR/release/$b" "/usr/local/bin/.$b.new"
+    sudo mv -f "/usr/local/bin/.$b.new" "/usr/local/bin/$b"
+done
 
 echo -e "Installed binaries:"
 ls -lh /usr/local/bin/ec2pass*
