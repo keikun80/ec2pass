@@ -47,12 +47,12 @@ fi
 echo -e "${CYAN}=== Running ec2pass End-to-End Verification Suite ===${NC}"
 
 # Test 1: Version check
-echo -n "[1/7] Testing version command... "
+echo -n "[1/8] Testing version command... "
 $BIN --version >/dev/null
 echo -e "${GREEN}PASSED${NC}"
 
 # Test 2: Find catalog check (standard catalog and AWS CDN version listing)
-echo -n "[2/7] Testing find command and AWS CDN version listing... "
+echo -n "[2/8] Testing find command and AWS CDN version listing... "
 $BIN find >/dev/null
 $BIN find minimal --format json >/dev/null
 $BIN find --show-versions >/dev/null
@@ -60,25 +60,25 @@ $BIN find 2023.12 --show-versions --format json >/dev/null
 echo -e "${GREEN}PASSED${NC}"
 
 # Test 3: Networks list
-echo -n "[3/7] Testing networks command... "
+echo -n "[3/8] Testing networks command... "
 $BIN networks >/dev/null
 echo -e "${GREEN}PASSED${NC}"
 
 # Test 4: Launch instance
 TEST_VM="e2e-ci-$(date +%s)"
 if command -v qemu-system-x86_64 >/dev/null 2>&1 || command -v qemu-system-aarch64 >/dev/null 2>&1 || command -v qemu-kvm >/dev/null 2>&1 || [ -x /usr/libexec/qemu-kvm ]; then
-    echo -n "[4/7] Launching test instance '${TEST_VM}'... "
+    echo -n "[4/8] Launching test instance '${TEST_VM}'... "
     $BIN launch al2023 -n "$TEST_VM" --cpus 1 --memory 1G --disk 25G >/dev/null
     echo -e "${GREEN}PASSED${NC}"
 
     # Test 5: Verify list and info
-    echo -n "[5/7] Verifying list and info... "
+    echo -n "[5/8] Verifying list and info... "
     $BIN list | grep -q "$TEST_VM"
     $BIN info "$TEST_VM" | grep -q "Running"
     echo -e "${GREEN}PASSED${NC}"
 
     # Test 6: Execute commands inside VM
-    echo -n "[6/7] Executing commands (whoami, os-release)... "
+    echo -n "[6/8] Executing commands (whoami, os-release)... "
     USER_OUT=$($BIN exec "$TEST_VM" -- whoami | tr -d '\r\n')
     if [ "$USER_OUT" != "ec2-user" ]; then
         echo -e "${RED}FAILED: expected 'ec2-user', got '$USER_OUT'${NC}"
@@ -87,8 +87,30 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1 || command -v qemu-system-aarch
     $BIN exec "$TEST_VM" -- cat /etc/os-release | grep -q "Amazon Linux"
     echo -e "${GREEN}PASSED${NC}"
 
-    # Test 7: Stop, snapshot, delete and purge
-    echo -n "[7/7] Testing stop, snapshot, delete and purge lifecycle... "
+    # Test 7: user-data debugging. A failing script must not fail the launch; the report,
+    # trace, guest log and bundle must still be produced.
+    echo -n "[7/8] Testing user-data debug report, --trace and logs... "
+    DBG_VM="${TEST_VM}-dbg"
+    UD_FILE="$(mktemp)"
+    printf '#!/bin/bash\nstep() { echo "e2e-step-$1"; }\nstep one\nexit 3\n' >"$UD_FILE"
+    e2e_fail() { echo -e "${RED}FAILED: $1${NC}"; exit 1; }
+    LAUNCH_OUT=$($BIN launch al2023 -n "$DBG_VM" --cpus 1 --memory 1G --disk 25G \
+        --cloud-init "$UD_FILE" --trace 2>&1) || e2e_fail "launch must succeed when user-data fails"
+    rm -f "$UD_FILE"
+    [[ "$LAUNCH_OUT" == *"exited with code 3"* ]] || e2e_fail "launch report lacks the exit code: $LAUNCH_OUT"
+    [[ "$LAUNCH_OUT" == *"debug bundle:"* ]] || e2e_fail "launch did not save a debug bundle"
+    OUT=$($BIN logs "$DBG_VM" --cloud-init 2>&1)
+    [[ "$OUT" == *"e2e-step-one"* ]] || e2e_fail "logs --cloud-init lacks script output: $OUT"
+    OUT=$($BIN logs "$DBG_VM" --trace 2>&1)
+    [[ "$OUT" == *"step one"* ]] || e2e_fail "logs --trace lacks the traced line: $OUT"
+    OUT=$($BIN logs "$DBG_VM" --save 2>&1)
+    [[ "$OUT" == *"Debug bundle saved"* ]] || e2e_fail "logs --save failed: $OUT"
+    $BIN logs "$DBG_VM" >/dev/null || e2e_fail "logs (console) failed"
+    $BIN delete "$DBG_VM" --purge >/dev/null
+    echo -e "${GREEN}PASSED${NC}"
+
+    # Test 8: Stop, snapshot, delete and purge
+    echo -n "[8/8] Testing stop, snapshot, delete and purge lifecycle... "
     $BIN stop "$TEST_VM" >/dev/null
     $BIN snapshot "$TEST_VM" --name snap-e2e --comment "ci test" >/dev/null
     $BIN list --snapshots | grep -q "snap-e2e"
@@ -101,8 +123,8 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1 || command -v qemu-system-aarch
     fi
     echo -e "${GREEN}PASSED${NC}"
 
-    echo -e "\n${GREEN}ALL 7 E2E INTEGRATION TESTS PASSED SUCCESSFULLY!${NC}"
+    echo -e "\n${GREEN}ALL 8 E2E INTEGRATION TESTS PASSED SUCCESSFULLY!${NC}"
 else
-    echo -e "[4-7/7] ${YELLOW}Note: qemu-system-x86_64 not present in this lightweight build environment; full VM launch lifecycle skipped.${NC}"
+    echo -e "[4-7/8] ${YELLOW}Note: qemu-system-x86_64 not present in this lightweight build environment; full VM launch lifecycle skipped.${NC}"
     echo -e "        ${GREEN}CLI commands, remote AWS catalog, network queries, and protocol RPCs verified successfully!${NC}"
 fi
