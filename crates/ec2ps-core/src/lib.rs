@@ -12,6 +12,34 @@ use std::path::{Path, PathBuf};
 /// Length in hex characters of a daemon auth token (32 random bytes).
 pub const AUTH_TOKEN_HEX_LEN: usize = 64;
 
+/// Stops this process's stdin/stdout/stderr handles from leaking into child processes.
+///
+/// On Windows, Rust spawns children with handle inheritance enabled, so a background child
+/// (the auto-started daemon, QEMU) also inherits the parent's console or pipe handles even when
+/// its own stdio is redirected. A caller like `ec2pass find | Out-Null` then never sees EOF and
+/// hangs until the daemon exits. Clearing the inherit flag on our own std handles prevents
+/// that; std handles explicitly given to a child are still duplicated for it. No-op elsewhere.
+pub fn stop_std_handle_inheritance() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{
+            SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+        };
+        use windows_sys::Win32::System::Console::{
+            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+        for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            // SAFETY: GetStdHandle/SetHandleInformation only touch this process's handle table.
+            unsafe {
+                let h = GetStdHandle(id);
+                if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                    SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
+    }
+}
+
 /// Generates a cryptographically random hex auth token.
 pub fn generate_auth_token() -> anyhow::Result<String> {
     use ring::rand::SecureRandom;

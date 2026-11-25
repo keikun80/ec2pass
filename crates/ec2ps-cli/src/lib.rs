@@ -1264,6 +1264,7 @@ async fn connect_or_spawn_daemon(addr: &str) -> Result<TcpStream> {
                 daemon_path = bin_dir.join(fallback);
             }
             if daemon_path.exists() {
+                ec2ps_core::stop_std_handle_inheritance();
                 let _ = std::process::Command::new(&daemon_path)
                     .arg("--address")
                     .arg(addr)
@@ -1304,6 +1305,7 @@ async fn connect_or_spawn_pipe_daemon(
         if let Some(bin_dir) = current_exe.parent() {
             let daemon_path = bin_dir.join("ec2passd.exe");
             if daemon_path.exists() {
+                ec2ps_core::stop_std_handle_inheritance();
                 let _ = std::process::Command::new(&daemon_path)
                     .arg("--address")
                     .arg(pipe_name)

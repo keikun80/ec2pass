@@ -102,6 +102,8 @@ async fn main() -> Result<()> {
         .init();
 
     let args = DaemonArgs::parse();
+    // QEMU and ssh children must not keep the daemon's own console/log handles open.
+    ec2ps_core::stop_std_handle_inheritance();
     let mut data_dir = args.data_dir.unwrap_or_else(default_data_dir);
     if let Err(e) = std::fs::create_dir_all(&data_dir) {
         tracing::warn!(

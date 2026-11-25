@@ -25,6 +25,9 @@ Get-Process -Name ec2passd, mpd, alpassd -ErrorAction SilentlyContinue | Stop-Pr
 # Start ec2passd daemon in same session context (Rule 8 compliant)
 $dataDir = ".\data"
 New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+# The CLI defaults to the named pipe on Windows; point it at this test daemon instead.
+$env:EC2PASS_DAEMON_ADDR = "127.0.0.1:50051"
+$env:EC2PASS_ALLOW_UNACCELERATED = "1"
 $daemonProc = Start-Process -FilePath $daemonBin -ArgumentList "--address", "127.0.0.1:50051", "--data-dir", $dataDir -PassThru -NoNewWindow
 Start-Sleep -Seconds 1
 
