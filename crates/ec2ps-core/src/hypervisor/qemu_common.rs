@@ -39,6 +39,20 @@ const AARCH64_UEFI_FIRMWARE_PATHS: &[&str] = &[
     r"C:\Program Files\qemu\share\edk2-aarch64-code.fd",
 ];
 
+/// File in the instance directory that receives QEMU's stderr.
+pub const QEMU_LOG_NAME: &str = "qemu.log";
+
+/// Last lines of an instance's qemu.log, for error messages.
+pub fn read_qemu_log_tail(instance_dir: &std::path::Path) -> String {
+    let text = std::fs::read_to_string(instance_dir.join(QEMU_LOG_NAME)).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() {
+        "no output in qemu.log".to_string()
+    } else {
+        lines[lines.len().saturating_sub(10)..].join("\n")
+    }
+}
+
 /// Platform-agnostic QEMU Hypervisor Driver.
 pub struct QemuDriver {
     pub qemu_bin: String,
@@ -332,7 +346,6 @@ impl QemuDriver {
                     "tcg".to_string(),
                     "-cpu".to_string(),
                     "max".to_string(),
-                    "-no-hpet".to_string(),
                 ]);
             }
         } else if cfg!(target_os = "macos") {
@@ -430,15 +443,29 @@ impl super::VirtualMachineDriver for QemuDriver {
 
     async fn start_vm(&self, rec: &InstanceRecord) -> Result<u32> {
         let args = self.build_qemu_args(rec);
+        // QEMU's own errors (bad options, missing accelerator, locked disk) go to qemu.log so a
+        // failed start is reported instead of silently waiting for SSH until the timeout.
+        let log_path = rec.instance_dir.join(QEMU_LOG_NAME);
+        let log_file = std::fs::File::create(&log_path)
+            .with_context(|| format!("Failed to create {}", log_path.display()))?;
         let mut child = Command::new(&self.qemu_bin)
             .args(&args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(log_file)
             .spawn()
             .with_context(|| {
                 format!("Failed to spawn QEMU hypervisor process: {}", self.qemu_bin)
             })?;
+
+        tokio::time::sleep(timeouts::QEMU_START_CHECK).await;
+        if let Ok(Some(status)) = child.try_wait() {
+            bail!(
+                "QEMU exited immediately ({}): {}",
+                status,
+                read_qemu_log_tail(&rec.instance_dir)
+            );
+        }
 
         let pid = child.id().unwrap_or(0);
         tokio::spawn(async move {

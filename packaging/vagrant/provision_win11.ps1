@@ -25,7 +25,37 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
     Write-Host "  [OK] Git detected: $(git --version)" -ForegroundColor Green
 }
 
-# 3. Check / Install Rust Toolchain
+# 3a. MSVC linker (required by the stable-x86_64-pc-windows-msvc Rust toolchain)
+Write-Host "`n[3/4] Verifying MSVC Build Tools and QEMU..." -ForegroundColor Yellow
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$hasVc = (Test-Path $vswhere) -and (& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
+if (-not $hasVc) {
+    Write-Host "Installing Visual Studio 2022 Build Tools (C++ workload)..." -ForegroundColor Gray
+    winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget --accept-package-agreements --accept-source-agreements --silent `
+        --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+    # winget is often unavailable in a WinRM (non-interactive) session; fall back to Chocolatey.
+    $hasVc = (Test-Path $vswhere) -and (& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
+    if (-not $hasVc -and (Get-Command choco -ErrorAction SilentlyContinue)) {
+        choco install -y --no-progress visualstudio2022buildtools `
+            --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --norestart"
+    }
+}
+
+# 3b. QEMU (ec2pass's primary engine on Windows; falls back to TCG without WHPX)
+if (-not (Test-Path "C:\Program Files\qemu\qemu-system-x86_64.exe")) {
+    Write-Host "Installing QEMU for Windows..." -ForegroundColor Gray
+    winget install --id SoftwareFreedomConservancy.QEMU -e --source winget --accept-package-agreements --accept-source-agreements --silent
+    if (-not (Test-Path "C:\Program Files\qemu\qemu-system-x86_64.exe") -and (Get-Command choco -ErrorAction SilentlyContinue)) {
+        choco install -y --no-progress qemu
+    }
+}
+if (Test-Path "C:\Program Files\qemu\qemu-system-x86_64.exe") {
+    Write-Host "  [OK] QEMU: $(& 'C:\Program Files\qemu\qemu-system-x86_64.exe' --version | Select-Object -First 1)" -ForegroundColor Green
+} else {
+    Write-Warning "QEMU was not installed; the E2E launch stages will fail."
+}
+
+# 3c. Check / Install Rust Toolchain
 Write-Host "`n[3/4] Verifying Rust toolchain..." -ForegroundColor Yellow
 $cargoBin = "$env:USERPROFILE\.cargo\bin"
 if (Test-Path $cargoBin) {

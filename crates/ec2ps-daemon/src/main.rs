@@ -684,6 +684,20 @@ where
                 let elapsed = start_wait.elapsed().as_secs();
                 let pct = (85 + (elapsed as f64 / timeout_secs as f64 * 14.0) as u8).min(99);
 
+                // Stop waiting as soon as the hypervisor process dies (crash, bad option).
+                if pid != 0 && !is_process_alive(pid) {
+                    record.details.state = InstanceState::Stopped;
+                    record.pid = None;
+                    let mut store = ctx.store.lock().await;
+                    store.data.instances.insert(instance_name.clone(), record);
+                    store.save()?;
+                    bail!(
+                        "QEMU for '{}' exited while booting: {}",
+                        instance_name,
+                        ec2ps_core::hypervisor::qemu_common::read_qemu_log_tail(&instance_dir)
+                    );
+                }
+
                 if watch {
                     for line in console.read_new_lines() {
                         send_log(writer, &format!("console    | {}", line)).await?;

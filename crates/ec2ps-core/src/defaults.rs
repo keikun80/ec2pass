@@ -62,6 +62,8 @@ pub mod timeouts {
     /// Extra settle time after QEMU exits so OS file locks are released.
     pub const QEMU_LOCK_RELEASE: Duration = Duration::from_millis(250);
     /// Settle time after a forced QMP `quit`.
+    /// How long to wait after spawning QEMU before checking that it did not exit at once.
+    pub const QEMU_START_CHECK: Duration = Duration::from_millis(700);
     pub const QEMU_FORCE_QUIT_SETTLE: Duration = Duration::from_millis(300);
 
     /// Delay between `qemu-img snapshot` retries (disk may still be locked).

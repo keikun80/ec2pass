@@ -14,6 +14,9 @@ if (-not (Test-Path $bin)) {
     Write-Error "ec2pass.exe not found. Run 'cargo build' first."
 }
 
+# Unaccelerated (TCG) hosts, e.g. nested VMs without WHPX, need far longer to boot.
+$launchTimeout = if ($env:E2E_LAUNCH_TIMEOUT) { $env:E2E_LAUNCH_TIMEOUT } else { "300" }
+
 Write-Host "=== Running ec2pass End-to-End Windows Verification Suite ===" -ForegroundColor Cyan
 
 # Terminate any stale daemons
@@ -47,7 +50,7 @@ try {
     # Test 4: Launch instance
     $testVm = "e2e-win-$(Get-Random)"
     Write-Host -NoNewline "[4/8] Launching test instance '$testVm'... "
-    & $bin launch al2023 -n $testVm --cpus 1 --memory 1G --disk 25G | Out-Null
+    & $bin launch al2023 -n $testVm --cpus 1 --memory 1G --disk 25G --timeout $launchTimeout | Out-Null
     Write-Host "PASSED" -ForegroundColor Green
 
     # Test 5: Verify list and info
@@ -73,7 +76,7 @@ try {
     $udFile = [System.IO.Path]::GetTempFileName()
     # LF line endings: the guest runs this with bash.
     [System.IO.File]::WriteAllText($udFile, "#!/bin/bash`nstep() { echo `"e2e-step-`$1`"; }`nstep one`nexit 3`n")
-    $launchOut = (& $bin launch al2023 -n $dbgVm --cpus 1 --memory 1G --disk 25G --cloud-init $udFile --trace 2>&1 | Out-String)
+    $launchOut = (& $bin launch al2023 -n $dbgVm --cpus 1 --memory 1G --disk 25G --timeout $launchTimeout --cloud-init $udFile --trace 2>&1 | Out-String)
     if ($LASTEXITCODE -ne 0) { throw "launch must succeed when user-data fails: $launchOut" }
     Remove-Item $udFile -Force
     if ($launchOut -notmatch "exited with code 3") { throw "launch report lacks the exit code: $launchOut" }

@@ -66,7 +66,8 @@ echo -e "  ${GREEN}✓ Source code unpacked to C:\\vagrant in Windows 11 VM.${NC
 
 # 7. Run Build, Test & Packaging inside guest VM
 echo -e "\n${YELLOW}[3/4] Running build, E2E tests, and release packaging inside Windows 11 VM...${NC}"
-vagrant winrm -e -c 'powershell -ExecutionPolicy Bypass -File C:\vagrant\packaging\vagrant\build_and_test_win11.ps1' win11
+# A VirtualBox guest usually has no WHPX, so QEMU falls back to slow TCG emulation.
+vagrant winrm -e -c "powershell -ExecutionPolicy Bypass -Command \"\$env:E2E_LAUNCH_TIMEOUT='${E2E_LAUNCH_TIMEOUT:-2400}'; & C:\\vagrant\\packaging\\vagrant\\build_and_test_win11.ps1; exit \$LASTEXITCODE\"" win11
 
 # 8. Retrieve Windows 11 release artifacts to host dist/
 echo -e "\n${YELLOW}[4/4] Retrieving Windows 11 release package from guest VM to host dist/...${NC}"

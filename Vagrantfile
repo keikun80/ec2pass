@@ -74,6 +74,8 @@ Vagrant.configure("2") do |config|
     # VirtualBox Configuration with Windows 11 TPM 2.0 & EFI Emulation
     win.vm.provider "virtualbox" do |vb|
       vb.name = "ec2pass-win11-dev"
+      # Share the box's disk instead of copying ~20 GB per VM.
+      vb.linked_clone = true
       vb.cpus = (ENV["VM_WIN11_CPUS"] || 4).to_i
       vb.memory = (ENV["VM_WIN11_MEMORY"] || 6144).to_i
 

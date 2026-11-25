@@ -27,6 +27,9 @@ if [ ! -f "$DAEMON_BIN" ] && command -v ec2passd >/dev/null 2>&1; then
     DAEMON_BIN="$(command -v ec2passd)"
 fi
 
+# Unaccelerated (TCG) hosts, e.g. nested VMs without VT-x, need far longer to boot.
+LAUNCH_TIMEOUT="${E2E_LAUNCH_TIMEOUT:-300}"
+
 # Ensure background daemon is running
 DAEMON_PID=""
 cleanup() {
@@ -68,7 +71,7 @@ echo -e "${GREEN}PASSED${NC}"
 TEST_VM="e2e-ci-$(date +%s)"
 if command -v qemu-system-x86_64 >/dev/null 2>&1 || command -v qemu-system-aarch64 >/dev/null 2>&1 || command -v qemu-kvm >/dev/null 2>&1 || [ -x /usr/libexec/qemu-kvm ]; then
     echo -n "[4/8] Launching test instance '${TEST_VM}'... "
-    $BIN launch al2023 -n "$TEST_VM" --cpus 1 --memory 1G --disk 25G >/dev/null
+    $BIN launch al2023 -n "$TEST_VM" --cpus 1 --memory 1G --disk 25G --timeout "$LAUNCH_TIMEOUT" >/dev/null
     echo -e "${GREEN}PASSED${NC}"
 
     # Test 5: Verify list and info
@@ -94,7 +97,7 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1 || command -v qemu-system-aarch
     UD_FILE="$(mktemp)"
     printf '#!/bin/bash\nstep() { echo "e2e-step-$1"; }\nstep one\nexit 3\n' >"$UD_FILE"
     e2e_fail() { echo -e "${RED}FAILED: $1${NC}"; exit 1; }
-    LAUNCH_OUT=$($BIN launch al2023 -n "$DBG_VM" --cpus 1 --memory 1G --disk 25G \
+    LAUNCH_OUT=$($BIN launch al2023 -n "$DBG_VM" --cpus 1 --memory 1G --disk 25G --timeout "$LAUNCH_TIMEOUT" \
         --cloud-init "$UD_FILE" --trace 2>&1) || e2e_fail "launch must succeed when user-data fails"
     rm -f "$UD_FILE"
     [[ "$LAUNCH_OUT" == *"exited with code 3"* ]] || e2e_fail "launch report lacks the exit code: $LAUNCH_OUT"
