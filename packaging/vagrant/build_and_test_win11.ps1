@@ -55,7 +55,7 @@ if ($LASTEXITCODE -ne 0) { Write-Host "FAILED: E2E suite (exit $LASTEXITCODE)" -
 
 # 5. Package Windows 11 Release Archive
 Write-Host "`n[Step 5/5] Creating Windows release ZIP archive in dist/..." -ForegroundColor Yellow
-$version = "0.1.3"
+$version = (Select-String -Path ".\Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
 $distDir = ".\dist"
 $stageName = "ec2pass-$version-windows-x86_64"
 $stageDir = Join-Path $distDir $stageName
