@@ -66,15 +66,19 @@ echo -e "  ${GREEN}✓ Source code unpacked to C:\\vagrant in Windows 11 VM.${NC
 
 # 7. Run Build, Test & Packaging inside guest VM
 echo -e "\n${YELLOW}[3/4] Running build, E2E tests, and release packaging inside Windows 11 VM...${NC}"
-vagrant winrm -e -c 'powershell -ExecutionPolicy Bypass -File C:\vagrant\packaging\vagrant\build_and_test_win11.ps1' win11
+# A VirtualBox guest usually has no WHPX, so QEMU falls back to slow TCG emulation.
+# vagrant winrm already runs the command in PowerShell, so set the variable there directly.
+vagrant winrm -e -c "\$env:E2E_LAUNCH_TIMEOUT='${E2E_LAUNCH_TIMEOUT:-2400}'; powershell -ExecutionPolicy Bypass -File C:\\vagrant\\packaging\\vagrant\\build_and_test_win11.ps1; exit \$LASTEXITCODE" win11
 
 # 8. Retrieve Windows 11 release artifacts to host dist/
+VERSION=$(grep -m1 '^version' "$PROJECT_ROOT/Cargo.toml" | cut -d'"' -f2)
+ZIP_NAME="ec2pass-${VERSION}-windows-x86_64.zip"
 echo -e "\n${YELLOW}[4/4] Retrieving Windows 11 release package from guest VM to host dist/...${NC}"
 mkdir -p "$PROJECT_ROOT/dist"
 
 # Download release package using powershell base64 or vagrant winrm
-vagrant winrm -e -c 'powershell -ExecutionPolicy Bypass -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes(\"C:\vagrant\dist\ec2pass-0.1.3-windows-x86_64.zip\"))"' win11 | tr -d '\r\n' | base64 --decode > "$PROJECT_ROOT/dist/ec2pass-0.1.3-windows-x86_64.zip"
-vagrant winrm -e -c 'powershell -ExecutionPolicy Bypass -Command "Get-Content C:\vagrant\dist\ec2pass-0.1.3-windows-x86_64.zip.sha256"' win11 > "$PROJECT_ROOT/dist/ec2pass-0.1.3-windows-x86_64.zip.sha256"
+vagrant winrm -e -c "powershell -ExecutionPolicy Bypass -Command \"[Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\\vagrant\\dist\\${ZIP_NAME}'))\"" win11 | tr -d '\r\n' | base64 --decode > "$PROJECT_ROOT/dist/${ZIP_NAME}"
+vagrant winrm -e -c "powershell -ExecutionPolicy Bypass -Command \"Get-Content 'C:\\vagrant\\dist\\${ZIP_NAME}.sha256'\"" win11 > "$PROJECT_ROOT/dist/${ZIP_NAME}.sha256"
 
 echo -e "\n${GREEN}================================================================${NC}"
 echo -e "${GREEN}  SUCCESS: Windows 11 build, E2E tests, and release packaging PASSED!${NC}"

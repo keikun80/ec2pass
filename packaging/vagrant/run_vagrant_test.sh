@@ -46,7 +46,7 @@ echo -e "  ${GREEN}✓ Source code uploaded and unpacked to /vagrant in guest VM
 
 # 4. Execute Build, Test & Packaging inside guest VM
 echo -e "\n${YELLOW}[3/4] Running build, E2E tests, and release packaging inside Linux VM...${NC}"
-vagrant ssh "$TARGET_VM" -c "bash /vagrant/packaging/vagrant/build_and_test.sh"
+vagrant ssh "$TARGET_VM" -c "E2E_LAUNCH_TIMEOUT=${E2E_LAUNCH_TIMEOUT:-300} bash /vagrant/packaging/vagrant/build_and_test.sh"
 
 # 5. Retrieve Linux release artifacts from guest VM
 echo -e "\n${YELLOW}[4/4] Retrieving Linux release package from guest VM to host dist/...${NC}"

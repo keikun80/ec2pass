@@ -1,5 +1,81 @@
 # InhausLab ec2pass Release Notes
 
+## InhausLab ec2pass 0.1.4 Release Notes
+
+**Release Version**: `0.1.4`  
+**Release Date**: 2026-11-28  
+**Target Architecture**: macOS Darwin (x86_64 / Apple Silicon Universal 2), Linux (x86_64), Windows 11 (x86_64)
+
+---
+
+### Overview
+
+`ec2pass` 0.1.4 makes cloud-init user-data easier to debug and accepts the user-data formats EC2 accepts. It fixes several problems on Windows hosts and with state, SSH and QEMU handling, and adds CI for Linux, macOS and Windows.
+
+---
+
+### What's New in 0.1.4
+
+#### 1. User-Data Debugging
+* A failing user-data script no longer looks like success. `launch` still exits 0 with the VM running, and prints a report with the cloud-init status, the failed commands with their exit codes, and the tail of the output.
+* `launch --watch` streams the serial console and, once SSH is up, the guest's `cloud-init-output.log`.
+* `launch --trace` records a timestamped, line-numbered bash xtrace of user-data scripts in `/var/log/ec2pass/userdata-trace.log` without changing the script or its output.
+* New `ec2pass logs <name> [-f] [--cloud-init|--trace|--save]`. A debug bundle (cloud-init status and logs, delivered user-data and vendor-data, journal, trace, console) is saved under `<data dir>/logs/<name>/<timestamp>/` after each launch and with `logs --save`.
+
+#### 2. EC2 User-Data Formats
+* Shell scripts (`#!/bin/bash`), MIME multipart and the other cloud-init formats are passed through unchanged. Before, every user-data was validated as YAML and prefixed with `#cloud-config`. `#cloud-config` and headerless user-data are still validated.
+* User-data that defines `users:` (including an empty `users:`) keeps the `ec2pass` login user.
+* A UTF-8 byte order mark at the start of a user-data file is accepted.
+
+#### 3. Image Catalog
+* Built-in images updated to their latest releases: Ubuntu 26.04 LTS, Debian 13, Rocky Linux 10, Fedora 45 and Amazon Linux 2 2.0.20261120.0.
+* Fixed the Fedora entry (404 after end of life), added a native arm64 Amazon Linux 2 image, and replaced the Amazon Linux 2 placeholder checksum with the published SHA256SUMS value.
+
+#### 4. Reliability
+* `state.json` is never reset silently when it cannot be parsed; the daemon reports an error instead.
+* SSH and QMP host ports skip ports already used by other instances or bound on loopback. The first ports are configurable with `local.ssh-port-base` and `local.qmp-port-base`.
+* `exec` never runs a command a second time after a disconnect during the session.
+* If QEMU exits during launch, the launch fails at once with the end of the instance's `qemu.log`, instead of waiting for SSH until the timeout.
+* The daemon auth token is generated from a cryptographically secure random source.
+* A relative `--data-dir` is resolved to an absolute path.
+
+#### 5. Windows Hosts
+* The CLI no longer passes its console handles to the daemon it starts, which made scripts that read the CLI's output hang.
+* Process liveness checks use `OpenProcess` instead of parsing `tasklist` output.
+* Without WHPX, QEMU emulates a modern CPU (`-cpu max`), so guests that need x86-64-v2, such as Amazon Linux 2023, boot instead of panicking. WHPX is used when it is available.
+
+#### 6. Continuous Integration
+* Every push runs formatting, clippy and the test suite on Linux, macOS and Windows, and the full end-to-end suite on Linux with KVM.
+
+### Verification
+* macOS (x86_64, HVF): all 8 end-to-end stages pass with the release package.
+* Linux (x86_64, KVM): all 8 end-to-end stages pass in CI.
+* Windows (x86_64): clippy, unit tests and build pass in CI. The end-to-end suite on a Windows host has not been run yet for this release.
+
+---
+
+### Upgrade Guide
+
+#### macOS
+```bash
+curl -fsSL https://github.com/keikun80/ec2pass/releases/download/0.1.4/ec2pass-0.1.4-darwin-universal.tar.gz | tar -xz -C /tmp
+sudo /tmp/ec2pass-0.1.4-darwin-universal/install.sh
+```
+
+#### Linux (Amazon Linux 2023 / Enterprise Linux / Ubuntu)
+```bash
+curl -fsSL https://github.com/keikun80/ec2pass/releases/download/0.1.4/ec2pass-0.1.4-linux-x86_64.tar.gz | tar -xz -C /tmp
+sudo /tmp/ec2pass-0.1.4-linux-x86_64/install.sh
+```
+
+#### Windows 11 (PowerShell)
+```powershell
+Invoke-WebRequest -Uri https://github.com/keikun80/ec2pass/releases/download/0.1.4/ec2pass-0.1.4-windows-x86_64.zip -OutFile ec2pass.zip
+Expand-Archive -Path ec2pass.zip -DestinationPath $env:LOCALAPPDATA\Programs\ec2pass -Force
+```
+
+---
+
 ## InhausLab ec2pass 0.1.3 Release Notes
 
 **Release Version**: `0.1.3`  

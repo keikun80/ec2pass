@@ -31,10 +31,12 @@ Write-Host "Target:  $env:CARGO_TARGET_DIR"
 # 2. Compile Release Binaries
 Write-Host "`n[Step 2/5] Compiling release binaries with cargo build --release..." -ForegroundColor Yellow
 cargo build --workspace --release
+if ($LASTEXITCODE -ne 0) { Write-Host "FAILED: cargo build (exit $LASTEXITCODE)" -ForegroundColor Red; exit $LASTEXITCODE }
 
 # 3. Execute Workspace Unit Tests
 Write-Host "`n[Step 3/5] Running Rust unit & component tests..." -ForegroundColor Yellow
 cargo test --workspace
+if ($LASTEXITCODE -ne 0) { Write-Host "FAILED: cargo test (exit $LASTEXITCODE)" -ForegroundColor Red; exit $LASTEXITCODE }
 
 # 4. Execute End-to-End Test Suite
 Write-Host "`n[Step 4/5] Executing Windows E2E Verification Suite..." -ForegroundColor Yellow
@@ -49,10 +51,11 @@ Copy-Item -Force $bin "$targetRelease\ec2pass.exe"
 Copy-Item -Force $daemonBin "$targetRelease\ec2passd.exe"
 
 powershell -ExecutionPolicy Bypass -File ".\tests\e2e_test.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Host "FAILED: E2E suite (exit $LASTEXITCODE)" -ForegroundColor Red; exit $LASTEXITCODE }
 
 # 5. Package Windows 11 Release Archive
 Write-Host "`n[Step 5/5] Creating Windows release ZIP archive in dist/..." -ForegroundColor Yellow
-$version = "0.1.3"
+$version = (Select-String -Path ".\Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
 $distDir = ".\dist"
 $stageName = "ec2pass-$version-windows-x86_64"
 $stageDir = Join-Path $distDir $stageName

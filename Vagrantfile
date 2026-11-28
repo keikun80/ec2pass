@@ -4,6 +4,27 @@
 
 Vagrant.require_version ">= 2.2.0"
 
+# On recent macOS, Ruby's Socket.tcp(connect_timeout:) returns a socket even when the
+# connection is refused, so Vagrant treats every forwarded port as a collision and gives up.
+# Use a plain blocking connect (loopback refusals are immediate) for the check instead.
+if RUBY_PLATFORM.include?("darwin")
+  require "socket"
+  require "timeout"
+  require "vagrant/util/is_port_open"
+  module Vagrant
+    module Util
+      module IsPortOpen
+        def is_port_open?(host, port)
+          Timeout.timeout(1) { TCPSocket.new(host, port).close }
+          true
+        rescue SystemCallError, Timeout::Error, SocketError
+          false
+        end
+      end
+    end
+  end
+end
+
 Vagrant.configure("2") do |config|
   # ============================================================================
   # Helper to configure Linux virtual machines
@@ -70,10 +91,15 @@ Vagrant.configure("2") do |config|
     win.vm.communicator = "winrm"
     win.vm.boot_timeout = (ENV["VM_WIN11_BOOT_TIMEOUT"] || 900).to_i
     win.vm.synced_folder ".", "/vagrant", disabled: true
+    # Keep WinRM on loopback only.
+    win.vm.network :forwarded_port, id: "winrm", guest: 5985, host: 55985, host_ip: "127.0.0.1", auto_correct: true
+    win.vm.network :forwarded_port, id: "winrm-ssl", guest: 5986, host: 55986, host_ip: "127.0.0.1", auto_correct: true
 
     # VirtualBox Configuration with Windows 11 TPM 2.0 & EFI Emulation
     win.vm.provider "virtualbox" do |vb|
       vb.name = "ec2pass-win11-dev"
+      # Share the box's disk instead of copying ~20 GB per VM.
+      vb.linked_clone = true
       vb.cpus = (ENV["VM_WIN11_CPUS"] || 4).to_i
       vb.memory = (ENV["VM_WIN11_MEMORY"] || 6144).to_i
 
@@ -81,7 +107,7 @@ Vagrant.configure("2") do |config|
       vb.customize ["modifyvm", :id, "--tpm-type", "2.0"]
       vb.customize ["modifyvm", :id, "--nested-hw-virt", "on"]
       vb.customize ["modifyvm", :id, "--vram", "128"]
-      vb.customize ["modifyvm", :id, "--graphicscontroller", "vboxvmsvga"]
+      vb.customize ["modifyvm", :id, "--graphicscontroller", "vboxsvga"]
       vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
     end
 

@@ -39,6 +39,64 @@ const AARCH64_UEFI_FIRMWARE_PATHS: &[&str] = &[
     r"C:\Program Files\qemu\share\edk2-aarch64-code.fd",
 ];
 
+/// Whether the Windows Hypervisor Platform (WHPX) is usable, asked the same way QEMU asks.
+/// WinHvPlatform.dll is loaded dynamically because it only exists when the optional
+/// "Windows Hypervisor Platform" feature is installed.
+#[cfg(windows)]
+fn whpx_available() -> bool {
+    use std::sync::OnceLock;
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+        // HRESULT WHvGetCapability(WHV_CAPABILITY_CODE, VOID*, UINT32, UINT32*)
+        type WhvGetCapability =
+            unsafe extern "system" fn(i32, *mut std::ffi::c_void, u32, *mut u32) -> i32;
+        const WHV_CAPABILITY_CODE_HYPERVISOR_PRESENT: i32 = 0;
+        let dll: Vec<u16> = "WinHvPlatform.dll\0".encode_utf16().collect();
+        // SAFETY: the function pointer comes from the documented WHvGetCapability export and
+        // is called with a 4-byte BOOL buffer, as the API requires for this capability code.
+        unsafe {
+            let module = LoadLibraryW(dll.as_ptr());
+            if module.is_null() {
+                return false;
+            }
+            let Some(proc_addr) = GetProcAddress(module, c"WHvGetCapability".as_ptr().cast())
+            else {
+                return false;
+            };
+            let get_capability: WhvGetCapability = std::mem::transmute(proc_addr);
+            let mut present: i32 = 0;
+            let mut written: u32 = 0;
+            let hr = get_capability(
+                WHV_CAPABILITY_CODE_HYPERVISOR_PRESENT,
+                (&mut present as *mut i32).cast(),
+                std::mem::size_of::<i32>() as u32,
+                &mut written,
+            );
+            hr >= 0 && present != 0
+        }
+    })
+}
+
+#[cfg(not(windows))]
+fn whpx_available() -> bool {
+    false
+}
+
+/// File in the instance directory that receives QEMU's stderr.
+pub const QEMU_LOG_NAME: &str = "qemu.log";
+
+/// Last lines of an instance's qemu.log, for error messages.
+pub fn read_qemu_log_tail(instance_dir: &std::path::Path) -> String {
+    let text = std::fs::read_to_string(instance_dir.join(QEMU_LOG_NAME)).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() {
+        "no output in qemu.log".to_string()
+    } else {
+        lines[lines.len().saturating_sub(10)..].join("\n")
+    }
+}
+
 /// Platform-agnostic QEMU Hypervisor Driver.
 pub struct QemuDriver {
     pub qemu_bin: String,
@@ -332,7 +390,6 @@ impl QemuDriver {
                     "tcg".to_string(),
                     "-cpu".to_string(),
                     "max".to_string(),
-                    "-no-hpet".to_string(),
                 ]);
             }
         } else if cfg!(target_os = "macos") {
@@ -343,12 +400,23 @@ impl QemuDriver {
                 "host".to_string(),
             ]);
         } else if cfg!(target_os = "windows") {
-            args.extend([
-                "-accel".to_string(),
-                "whpx,kernel-irqchip=off".to_string(),
-                "-accel".to_string(),
-                "tcg".to_string(),
-            ]);
+            if whpx_available() {
+                args.extend([
+                    "-accel".to_string(),
+                    "whpx,kernel-irqchip=off".to_string(),
+                    "-accel".to_string(),
+                    "tcg".to_string(),
+                ]);
+            } else {
+                // Without WHPX, QEMU's default qemu64 CPU lacks x86-64-v2, so modern distros
+                // (AL2023, RHEL 9 family) panic in init. Emulate every feature TCG supports.
+                args.extend([
+                    "-accel".to_string(),
+                    "tcg".to_string(),
+                    "-cpu".to_string(),
+                    "max".to_string(),
+                ]);
+            }
         }
 
         args
@@ -389,15 +457,18 @@ impl super::VirtualMachineDriver for QemuDriver {
             cmd.arg(format!("{}G", size_gib));
         }
 
-        let status = cmd
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
+        let output = cmd
+            .stdin(std::process::Stdio::null())
+            .output()
             .await
             .context("Failed to execute qemu-img create")?;
 
-        if !status.success() {
-            bail!("qemu-img failed to create overlay disk {:?}", overlay_path);
+        if !output.status.success() {
+            bail!(
+                "qemu-img failed to create overlay disk {:?}: {}",
+                overlay_path,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
         }
         Ok(())
     }
@@ -430,15 +501,29 @@ impl super::VirtualMachineDriver for QemuDriver {
 
     async fn start_vm(&self, rec: &InstanceRecord) -> Result<u32> {
         let args = self.build_qemu_args(rec);
+        // QEMU's own errors (bad options, missing accelerator, locked disk) go to qemu.log so a
+        // failed start is reported instead of silently waiting for SSH until the timeout.
+        let log_path = rec.instance_dir.join(QEMU_LOG_NAME);
+        let log_file = std::fs::File::create(&log_path)
+            .with_context(|| format!("Failed to create {}", log_path.display()))?;
         let mut child = Command::new(&self.qemu_bin)
             .args(&args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(log_file)
             .spawn()
             .with_context(|| {
                 format!("Failed to spawn QEMU hypervisor process: {}", self.qemu_bin)
             })?;
+
+        tokio::time::sleep(timeouts::QEMU_START_CHECK).await;
+        if let Ok(Some(status)) = child.try_wait() {
+            bail!(
+                "QEMU exited immediately ({}): {}",
+                status,
+                read_qemu_log_tail(&rec.instance_dir)
+            );
+        }
 
         let pid = child.id().unwrap_or(0);
         tokio::spawn(async move {
